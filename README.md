@@ -13,6 +13,37 @@ No deployment is baked into the published package: the CLI reads `--api-url`,
 then `POSTPLAN_API_URL`, then `~/.postplan/config.json`. Point it at your own
 instance.
 
+## Set it up with an agent
+
+Paste this into Claude Code, Codex or any coding agent:
+
+```text
+Set up postplan for me by following https://raw.githubusercontent.com/Aryan-Saini/postplan-convex/main/SETUP.md
+```
+
+[SETUP.md](SETUP.md) has the agent ask whether files go to Convex storage or S3,
+create a Convex project on your account, deploy this server, lock it with an API
+key, authenticate the CLI and install the skills. The only things you do are
+approve the Convex login and answer that one question.
+
+## Skills
+
+`skills/` holds the agent skills that drive the CLI: `html-communication`,
+`file-upload`, `send-file-link` and `request-upload-link`. They ship in the npm
+package.
+
+```bash
+npx postplan-aryan@latest skills install              # ~/.claude/skills and/or ~/.agents/skills
+npx postplan-aryan@latest skills install --dir <path> # anywhere else
+```
+
+A folder is only replaced if the installer wrote it, so a hand-maintained skill
+of the same name is skipped unless you pass `--force`. The install is recorded in
+`~/.postplan/skills.json`. After that, any command run from a newer package whose
+skills changed reinstalls them into the same folders and prints, on stderr, which
+SKILL.md files changed and that the agent should re-read them. Set
+`POSTPLAN_NO_SKILL_UPDATE=1` to turn that off.
+
 ## Rendering Markdown
 
 `render` turns a Markdown document into the same self-contained HTML the upload
@@ -165,17 +196,33 @@ cannot write outside `public/` and `protected/`, and it signs the `x-amz-tagging
 header, which S3 refuses unsigned on a presigned request. Record reads the size and
 type back from S3, so a PUT that never landed leaves no row.
 
-The assets bucket is separate from the drafts bucket and uses the same access keys.
-Without `ASSETS_BUCKET` and `ASSETS_REGION` the asset endpoints answer 503 with a
-message saying so.
+In S3 mode the assets bucket can be separate from the drafts bucket and uses the
+same access keys. Without `ASSETS_BUCKET` and `ASSETS_REGION` the asset endpoints
+answer 503 with a message saying so. Convex mode needs neither.
+
+## Storage
+
+A deployment stores bytes in S3 when `S3_BUCKET` is set and in Convex file
+storage otherwise. Convex storage needs no setup. The differences:
+
+- **Public assets** are served from `<deployment>.convex.cloud/api/storage/<uuid>`
+  instead of the bucket URL. Both are permanent and unguessable.
+- **Private assets** (`/a/<slug>`) redirect to that same storage URL, which does
+  not expire, instead of a 5-minute presigned URL.
+- **Expiry** is enforced by a daily cron (`convex/cleanup.ts`) that deletes the
+  bytes of expired assets and upload links, instead of the bucket's lifecycle rule.
+
+Rows written in Convex mode carry a `storageId`; S3 rows do not. Switching modes
+affects new uploads only.
 
 ## Self-hosting
 
-You need a Convex project and an S3 bucket. No Postgres, no Railway.
+You need a Convex project, and an S3 bucket only if you want S3. No Postgres, no
+Railway. [SETUP.md](SETUP.md) is the full procedure; by hand:
 
 1. `npm install`
 2. Copy `.env.example` to `.env.local` and fill in your deployment.
-3. Set the server env vars on your deployment:
+3. Set the server env vars on your deployment (the S3 ones only for S3 mode):
 
 ```bash
 npx convex env set --prod S3_BUCKET <bucket>

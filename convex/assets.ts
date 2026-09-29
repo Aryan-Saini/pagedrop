@@ -14,6 +14,7 @@ export const create = internalMutation({
     size: v.number(),
     contentType: v.string(),
     expiresAt: v.optional(v.number()),
+    storageId: v.optional(v.id("_storage")),
     createdBy: v.string(),
   },
   handler: async (ctx, args) => {
