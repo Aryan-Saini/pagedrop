@@ -3,9 +3,10 @@ import { BASE_CSS, ICON_SPRITE, esc, fmtExpiry, fmtSize, header } from "./pageSh
 /**
  * The page someone opens on a phone to send files in. Server-rendered, no build step.
  *
- * The wire protocol is untouched: for each file, POST `/api/u/<slug>/sign`, PUT the
- * bytes straight to the presigned S3 URL, then POST `/api/u/<slug>/record`. The page
- * runs under the same CSP as `/s/`, which is why `connect-src` has to name the bucket.
+ * The wire protocol: for each file, POST `/api/u/<slug>/sign`, send the bytes
+ * straight to storage with the slot's method (PUT to S3, or POST to Convex, which
+ * answers `{ storageId }`), then POST `/api/u/<slug>/record`. The page runs under
+ * the same CSP as `/s/`, which is why `connect-src` has to name the storage host.
  */
 export function uploadPage(
   slug: string,
@@ -133,10 +134,11 @@ send.onclick=async function(){
         body:JSON.stringify({name:f.name,contentType:type})});
       if(!r.ok)throw new Error('Could not prepare upload ('+r.status+')');
       var slot=await r.json();
-      var put=await fetch(slot.url,{method:'PUT',headers:{'Content-Type':type},body:f});
+      var put=await fetch(slot.url,{method:slot.method||'PUT',headers:{'Content-Type':type},body:f});
       if(!put.ok)throw new Error('Upload failed ('+put.status+')');
+      var stored=slot.method==='POST'?(await put.json()).storageId:undefined;
       var rec=await fetch('/api/u/'+SLUG+'/record',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({key:slot.key,name:f.name,size:f.size,contentType:type})});
+        body:JSON.stringify({key:slot.key,name:f.name,size:f.size,contentType:type,storageId:stored})});
       if(!rec.ok)throw new Error('Could not record upload ('+rec.status+')');
       done++; fill.style.width=(done/count*100)+'%'; pct.textContent=Math.round(done/count*100)+'%';
     }

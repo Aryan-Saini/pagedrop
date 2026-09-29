@@ -56,6 +56,7 @@ export const addFile = internalMutation({
     name: v.string(),
     size: v.number(),
     contentType: v.string(),
+    storageId: v.optional(v.id("_storage")),
   },
   handler: async (ctx, args) => {
     const request = await ctx.db

@@ -10,6 +10,7 @@ import {
   inferProject, isBuild, isoInstant, objectName, parseAssetRef, planExpiry, randomId, slugify
 } from "../src/assets.js";
 import { parseDraftRef } from "../src/draft-ref.js";
+import { bundleHash, defaultRoots, installSkills, updateIfStale, writeState } from "../src/skills.js";
 import { installPage, itmsLink, manifestPlist, readIpaInfo } from "../src/ios.js";
 import { fmtBytes } from "../src/render/filetypes.js";
 import { validateHtml } from "../src/html-policy.js";
@@ -26,6 +27,7 @@ const POSTPLAN_DIR = path.join(os.homedir(), ".postplan");
 const CONFIG_PATH = path.join(POSTPLAN_DIR, "config.json");
 const CREDENTIALS_PATH = path.join(POSTPLAN_DIR, "credentials.json");
 const DRAFTS_PATH = path.join(POSTPLAN_DIR, "drafts.json");
+const SKILLS_STATE_PATH = path.join(POSTPLAN_DIR, "skills.json");
 
 class CliError extends Error {}
 
@@ -53,6 +55,39 @@ program
   .name("postplan")
   .description("Upload static HTML drafts to Postplan.")
   .version(VERSION);
+
+// Installed skills follow the CLI: before any command, a bundle that changed since
+// `skills install` is reinstalled, and the agent is told to re-read it. stderr, so
+// one-line and --json output stays parseable. POSTPLAN_NO_SKILL_UPDATE=1 opts out.
+program.hook("preAction", (_program, action) => {
+  if (process.env.POSTPLAN_NO_SKILL_UPDATE || action.parent?.name() === "skills") return;
+  try {
+    const refreshed = updateIfStale({ statePath: SKILLS_STATE_PATH, version: VERSION });
+    if (refreshed?.length) {
+      console.error(`postplan: updated the installed skills to ${VERSION}:`);
+      for (const file of refreshed) console.error(`  ${file}`);
+      console.error("Re-read the SKILL.md of the skill you are using before you continue; its instructions may have changed.");
+    }
+  } catch (err) {
+    console.error(`postplan: could not update the installed skills: ${err.message}`);
+  }
+});
+
+const skillsCommand = program.command("skills").description("Install the agent skills that drive this CLI.");
+
+skillsCommand
+  .command("install")
+  .description("Copy the bundled skills into your agent's skills folder. They update themselves after that.")
+  .option("--dir <path...>", "Skills folder(s) to install into (default: ~/.claude/skills and/or ~/.agents/skills)")
+  .option("--force", "Replace same-named skill folders that postplan did not install")
+  .action((options) => {
+    const roots = (options.dir ?? defaultRoots()).map((dir) => path.resolve(dir.replace(/^~(?=$|\/)/, os.homedir())));
+    const { installed, skipped } = installSkills({ roots, version: VERSION, force: options.force });
+    for (const dir of installed) console.log(`Installed ${dir}`);
+    for (const { path: dir, reason } of skipped) console.log(`Skipped ${dir}: ${reason}`);
+    writeState(SKILLS_STATE_PATH, { hash: bundleHash(), version: VERSION, roots });
+    if (!installed.length) throw new CliError("No skills were installed.");
+  });
 
 const authCommand = program.command("auth").description("Manage CLI authentication.");
 
@@ -319,7 +354,7 @@ program
 
 program
   .command("send")
-  .description("Send files to Aryan: returns a link he can preview or download on his phone.")
+  .description("Send files out: returns a link to preview or download them on a phone.")
   .argument("<files...>", "files to send")
   .option("--api-url <url>", "Override the default API base URL")
   .option("--reason <text>", "what these files are, shown on the page")
@@ -355,16 +390,11 @@ program
       });
       const slot = await signed.json();
       if (!signed.ok) throw new CliError(slot.error || `Could not prepare ${name}.`);
-      const put = await fetch(slot.url, {
-        method: "PUT",
-        headers: { "Content-Type": type },
-        body: fs.readFileSync(file)
-      });
-      if (!put.ok) throw new CliError(`Upload failed for ${name} (${put.status})`);
+      const storageId = await sendBytes(slot, type, fs.readFileSync(file), name);
       const recorded = await fetch(`${apiUrl}/api/u/${info.slug}/record`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: slot.key, name, size: fs.statSync(file).size, contentType: type })
+        body: JSON.stringify({ key: slot.key, name, size: fs.statSync(file).size, contentType: type, storageId })
       });
       if (!recorded.ok) throw new CliError(`Could not record ${name}.`);
     }
@@ -547,8 +577,24 @@ program
   });
 
 /**
- * One asset upload: presign, PUT straight to S3 with the signed headers, then
- * record it. Resolves to the record response, `{ url, slug, visibility, expiresAt, key }`.
+ * Send one file's bytes to an upload slot from a sign endpoint: a PUT to S3 with
+ * the signed headers, or a POST to Convex storage. Resolves to the Convex
+ * `storageId` the record call needs, or undefined for S3.
+ */
+async function sendBytes(slot, contentType, body, name) {
+  const method = slot.method || "PUT";
+  const sent = await fetch(slot.url, {
+    method,
+    headers: { "Content-Type": contentType, ...slot.headers },
+    body
+  });
+  if (!sent.ok) throw new CliError(`Upload failed for ${name} (${sent.status}).`);
+  return method === "POST" ? (await sent.json()).storageId : undefined;
+}
+
+/**
+ * One asset upload: get a slot, send the bytes straight to storage, then record
+ * it. Resolves to the record response, `{ url, slug, visibility, expiresAt, key }`.
  */
 async function putAsset({ apiUrl, apiKey }, { name, project, visibility, contentType, body, expiresAt, tags }) {
   const slot = await postJson(
@@ -557,13 +603,10 @@ async function putAsset({ apiUrl, apiKey }, { name, project, visibility, content
     { name, project, contentType, size: body.length, visibility, expires: expiresAt, tags },
     `Could not prepare ${name}.`
   );
-  const put = await fetch(slot.url, {
-    method: "PUT",
-    headers: { "Content-Type": contentType, ...slot.headers },
-    body
-  });
-  if (!put.ok) throw new CliError(`Upload failed for ${name} (${put.status}).`);
-  return postJson(`${apiUrl}/api/assets/record`, apiKey, { key: slot.key, expires: expiresAt }, `Could not record ${name}.`);
+  const storageId = await sendBytes(slot, contentType, body, name);
+  return postJson(
+    `${apiUrl}/api/assets/record`, apiKey, { key: slot.key, expires: expiresAt, storageId }, `Could not record ${name}.`
+  );
 }
 
 /** POST JSON with the API key; the parsed body, or a CliError carrying the server's message. */

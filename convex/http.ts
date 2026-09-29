@@ -4,7 +4,10 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { validateHtml } from "../src/html-policy.js";
 import { assetSlug, parseAssetKey, taggingHeader, validateSignRequest } from "../src/assets.js";
-import { assetsConfig, draftKey, objectUrl, presign, s3Config, s3Host, type S3Config } from "./lib/s3";
+import { draftKey, presign, s3Config, type S3Config } from "./lib/s3";
+import {
+  assetsTarget, backend, publicUrl, putHtml, readText, readUrl, removeObject, storageOrigin, uploadSlot,
+} from "./lib/storage";
 import { uploadPage } from "./lib/uploadPage";
 import { downloadPage } from "./lib/downloadPage";
 
@@ -13,8 +16,8 @@ import { downloadPage } from "./lib/downloadPage";
  *
  * The CLI (`npx postplan upload`) speaks exactly three endpoints, so those are
  * reproduced byte-for-byte in shape. Convex functions replace express and Convex
- * tables replace Postgres; the HTML itself goes to S3, which removes Railway and
- * Postgres but keeps the bytes somewhere Aryan owns.
+ * tables replace Postgres. The bytes go to S3 or to Convex file storage,
+ * whichever the deployment's env picks (see `lib/storage.ts`).
  */
 
 const MAX_HTML_BYTES = Number(process.env.MAX_HTML_BYTES ?? 512 * 1024);
@@ -126,22 +129,22 @@ http.route({
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(html));
     const sha256 = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 
-    // Bytes go to S3, addressed by content hash: uploading the same HTML twice
-    // is idempotent, and a failed PUT leaves no row pointing at nothing.
-    const config = s3Config();
-    const key = draftKey(config, id, sha256);
-    const put = await fetch(await presign(config, "PUT", key, 300), {
-      method: "PUT",
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-      body: html,
-    });
-    if (!put.ok) return json({ error: `Storage upload failed (${put.status}).` }, 502);
+    // In S3 the key is the content hash, so uploading the same HTML twice is
+    // idempotent. Either way a failed store leaves no row pointing at nothing.
+    const key = backend() === "s3" ? draftKey(s3Config(), id, sha256) : `drafts/${id}/${sha256}.html`;
+    let stored;
+    try {
+      stored = await putHtml(ctx, key, html);
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
 
     const { versionNumber } = await ctx.runMutation(internal.drafts.upsert, {
       draftId: id,
       filename,
       description: typeof description === "string" ? description : undefined,
       key,
+      storageId: stored.storageId,
       sha256,
       bytes,
       metadata: metadata ?? undefined,
@@ -231,20 +234,19 @@ http.route({
     if (typeof slug !== "string") return json({ error: "slug is required." }, 400);
     const found = await ctx.runQuery(internal.uploads.bySlug, { slug });
     if (!found) return json({ error: "no such upload link" }, 404);
-    const config = s3Config();
     const files = await Promise.all(
       found.files.map(async (f) => ({
         name: f.name,
         size: f.size,
         contentType: f.contentType,
-        url: await presign(config, "GET", f.key, 3600),
+        url: await readUrl(ctx, f, 3600),
       })),
     );
     return json({ slug, reason: found.request.reason ?? null, expiresAt: found.request.expiresAt, files });
   }),
 });
 
-/** Mint a presigned PUT for the phone. No API key: the slug is the credential. */
+/** Mint an upload slot for the phone. No API key: the slug is the credential. */
 http.route({
   pathPrefix: "/api/u/",
   method: "POST",
@@ -266,15 +268,23 @@ http.route({
       if (typeof name !== "string" || typeof contentType !== "string") {
         return json({ error: "name and contentType are required." }, 400);
       }
-      const config = s3Config();
       const suffix = name.includes(".") ? name.slice(name.lastIndexOf(".")).toLowerCase().slice(0, 20) : "";
-      const key = `${config.prefix}/uploads/${slug}/${found.files.length + 1}${suffix}`;
-      return json({ key, url: await presign(config, "PUT", key, 3600) });
+      const prefix = backend() === "s3" ? `${s3Config().prefix}/` : "";
+      const key = `${prefix}uploads/${slug}/${found.files.length + 1}${suffix}`;
+      return json({ key, ...(await uploadSlot(ctx, key)) });
     }
 
-    const { key, name, size, contentType } = fields;
+    const { key, name, size, contentType, storageId } = fields;
     if (typeof key !== "string" || typeof name !== "string" || typeof size !== "number" || typeof contentType !== "string") {
       return json({ error: "key, name, size and contentType are required." }, 400);
+    }
+    if (backend() === "convex") {
+      const file = typeof storageId === "string" ? await ctx.runQuery(internal.files.metadata, { storageId }) : null;
+      if (!file) return json({ error: "storageId is not a stored file." }, 400);
+      await ctx.runMutation(internal.uploads.addFile, {
+        slug, key, name, size: file.size, contentType, storageId: file.storageId,
+      });
+      return json({ ok: true });
     }
     await ctx.runMutation(internal.uploads.addFile, { slug, key, name, size, contentType });
     return json({ ok: true });
@@ -282,30 +292,40 @@ http.route({
 });
 
 /**
- * Assets: `postplan asset` publishes a file to the assets bucket. The CLI asks
- * for a presigned PUT, sends the bytes straight to S3, then records the upload.
+ * Assets: `postplan asset` publishes a file. The CLI asks for an upload slot,
+ * sends the bytes straight to storage, then records the upload.
  * The server builds the key itself (`public/` or `protected/` + project + name),
  * so a client can never write outside those two prefixes.
  */
 
-/** The assets bucket, or the 503 that says it is not configured. */
-function assetsOr503(): S3Config | Response {
+/** The assets bucket (null in Convex mode), or the 503 that says S3 assets are not configured. */
+function assetsOr503(): S3Config | null | Response {
   try {
-    return assetsConfig();
+    return assetsTarget();
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : String(err) }, 503);
   }
 }
 
-/** Where an asset is reached: its bucket URL when public, `/a/<slug>` when private. */
-function assetUrl(
-  config: S3Config,
-  row: Pick<Doc<"assets">, "visibility" | "bucket" | "key" | "slug">,
+/** Where an asset is reached: its permanent storage URL when public, `/a/<slug>` when private. */
+async function assetUrl(
+  ctx: ActionCtx,
+  config: S3Config | null,
+  row: Pick<Doc<"assets">, "visibility" | "bucket" | "key" | "slug" | "storageId">,
   request: Request,
-): string {
-  return row.visibility === "public"
-    ? objectUrl({ ...config, bucket: row.bucket }, row.key)
-    : `${baseUrl(request)}/a/${row.slug}`;
+): Promise<string> {
+  return row.visibility === "public" ? publicUrl(ctx, row, config) : `${baseUrl(request)}/a/${row.slug}`;
+}
+
+/** Size and type of an S3 object, from a HEAD, or null when it is not there. */
+async function headObject(config: S3Config, key: string) {
+  const head = await fetch(await presign(config, "HEAD", key, 60), { method: "HEAD" });
+  if (!head.ok) return null;
+  return {
+    size: Number(head.headers.get("Content-Length") ?? 0),
+    contentType: head.headers.get("Content-Type") ?? "application/octet-stream",
+    storageId: undefined,
+  };
 }
 
 const readJson = async (request: Request): Promise<unknown> => request.json().catch(() => null);
@@ -313,7 +333,7 @@ const readJson = async (request: Request): Promise<unknown> => request.json().ca
 http.route({
   path: "/api/assets/sign",
   method: "POST",
-  handler: httpAction(async (_ctx, request) => {
+  handler: httpAction(async (ctx, request) => {
     const auth = authorize(request);
     if (!auth.ok) return json({ error: "Unauthorized." }, 401);
     const config = assetsOr503();
@@ -321,10 +341,10 @@ http.route({
     const parsed = validateSignRequest(await readJson(request));
     if (!parsed.ok) return json({ error: parsed.error }, 400);
     const tagging = taggingHeader(parsed.value.tags);
-    // The client must send these headers verbatim: they are part of the signature.
+    // For S3 the client must send these headers verbatim: they are part of the signature.
     const headers: Record<string, string> = tagging ? { "x-amz-tagging": tagging } : {};
-    const url = await presign(config, "PUT", parsed.value.key, 3600, headers);
-    return json({ key: parsed.value.key, url, headers });
+    const slot = await uploadSlot(ctx, parsed.value.key, headers, config ?? undefined);
+    return json({ key: parsed.value.key, ...slot });
   }),
 });
 
@@ -336,33 +356,38 @@ http.route({
     if (!auth.ok) return json({ error: "Unauthorized." }, 401);
     const config = assetsOr503();
     if (config instanceof Response) return config;
-    const { key, expires } = ((await readJson(request)) ?? {}) as Record<string, unknown>;
+    const { key, expires, storageId } = ((await readJson(request)) ?? {}) as Record<string, unknown>;
     const parsed = typeof key === "string" ? parseAssetKey(key) : null;
     if (!parsed || typeof key !== "string") return json({ error: "key is not an asset key." }, 400);
     if (expires !== undefined && expires !== null && (typeof expires !== "number" || expires <= Date.now())) {
       return json({ error: "expires must be a future epoch-ms time." }, 400);
     }
-    // Size and type come from S3, not the client, and a PUT that never landed
-    // leaves no row behind.
-    const head = await fetch(await presign(config, "HEAD", key, 60), { method: "HEAD" });
-    if (!head.ok) return json({ error: `Storage has no object at ${key} (${head.status}).` }, 400);
+    // Size and type come from storage, not the client, and an upload that never
+    // landed leaves no row behind.
+    const stored = config
+      ? await headObject(config, key)
+      : typeof storageId === "string"
+        ? await ctx.runQuery(internal.files.metadata, { storageId })
+        : null;
+    if (!stored) return json({ error: `Storage has no object for ${key}.` }, 400);
 
     const slug = assetSlug(parsed.name);
     const row = {
       slug,
       key,
-      bucket: config.bucket,
+      bucket: config ? config.bucket : "convex",
       visibility: parsed.visibility,
       project: parsed.project,
       name: parsed.name,
-      size: Number(head.headers.get("Content-Length") ?? 0),
-      contentType: head.headers.get("Content-Type") ?? "application/octet-stream",
+      size: stored.size,
+      contentType: stored.contentType,
       expiresAt: typeof expires === "number" ? expires : undefined,
+      storageId: stored.storageId,
       createdBy: auth.account,
     };
     await ctx.runMutation(internal.assets.create, row);
     return json({
-      url: assetUrl(config, row, request),
+      url: await assetUrl(ctx, config, row, request),
       slug,
       visibility: row.visibility,
       expiresAt: row.expiresAt ?? null,
@@ -381,7 +406,7 @@ http.route({
     if (config instanceof Response) return config;
     const rows = await ctx.runQuery(internal.assets.list, { createdBy: auth.account });
     return json({
-      assets: rows.map((row) => ({
+      assets: await Promise.all(rows.map(async (row) => ({
         slug: row.slug,
         key: row.key,
         project: row.project,
@@ -391,8 +416,8 @@ http.route({
         contentType: row.contentType,
         expiresAt: row.expiresAt ?? null,
         createdAt: row._creationTime,
-        url: assetUrl(config, row, request),
-      })),
+        url: await assetUrl(ctx, config, row, request),
+      }))),
     });
   }),
 });
@@ -414,11 +439,11 @@ http.route({
           ? await ctx.runQuery(internal.assets.byKey, { key })
           : null;
     if (!row || row.createdBy !== auth.account) return json({ error: "No such asset." }, 404);
-    const gone = await fetch(await presign({ ...config, bucket: row.bucket }, "DELETE", row.key, 60), {
-      method: "DELETE",
-    });
-    // S3 answers 204 for a delete, including of an object that is already gone.
-    if (!gone.ok) return json({ error: `Storage delete failed (${gone.status}).` }, 502);
+    try {
+      await removeObject(ctx, row, config ?? undefined);
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
     await ctx.runMutation(internal.assets.remove, { id: row._id });
     return json({ slug: row.slug, key: row.key });
   }),
@@ -448,6 +473,8 @@ const assetNotice = (text: string, status: number) =>
  * A stable link to one asset. No API key: the slug is the credential, as on /s/.
  * A private asset redirects to a 5-minute presigned GET, so the raw bucket URL
  * is never the thing that gets shared; a public one redirects to its bucket URL.
+ * In Convex mode both redirect to the file's storage URL, which does not expire,
+ * so there `/a/` is a stable handle rather than a short-lived one.
  */
 http.route({
   pathPrefix: "/a/",
@@ -460,9 +487,7 @@ http.route({
     const config = assetsOr503();
     if (config instanceof Response) return config;
     const location =
-      row.visibility === "public"
-        ? objectUrl({ ...config, bucket: row.bucket }, row.key)
-        : await presign({ ...config, bucket: row.bucket }, "GET", row.key, 300);
+      row.visibility === "public" ? await publicUrl(ctx, row, config) : await readUrl(ctx, row, 300, config ?? undefined);
     return new Response(null, {
       status: 302,
       headers: {
@@ -479,8 +504,8 @@ http.route({
  * The sandbox for our own two file pages.
  *
  * Same shape as the draft CSP below, with one deliberate hole: `connect-src` names
- * this origin (the sign and record calls) and the S3 bucket host derived from
- * `s3Config()` at request time, because the upload page PUTs bytes straight to S3
+ * this origin (the sign and record calls) and the storage host (the S3 bucket or
+ * the `.convex.cloud` origin) at request time, because the upload page sends bytes straight to storage
  * and the download page fetches text files to preview them. `blob:` is in `img-src`
  * and `media-src` so a picked file can be shown before it is sent. Everything else
  * is off: no frames in either direction, no forms, no workers, no base retargeting.
@@ -494,7 +519,7 @@ const filePageCsp = (): string =>
     "style-src 'unsafe-inline'",
     "font-src data:",
     "script-src 'unsafe-inline'",
-    `connect-src 'self' https://${s3Host(s3Config())}`,
+    `connect-src 'self' ${storageOrigin()}`,
     "frame-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'none'",
@@ -549,13 +574,12 @@ http.route({
     if (found.request.expiresAt < Date.now()) {
       return filePageNotice("Expired", "This link has expired.", 410);
     }
-    const config = s3Config();
     const files = await Promise.all(
       found.files.map(async (f) => ({
         name: f.name,
         size: f.size,
         contentType: f.contentType,
-        url: await presign(config, "GET", f.key, 3600),
+        url: await readUrl(ctx, f, 3600),
       })),
     );
     // "Sent" is when the last file landed; for an empty link, when the link was made.
@@ -652,10 +676,9 @@ async function serveDraft(ctx: ActionCtx, request: Request): Promise<Response> {
     version = found.version;
   }
 
-  const config = s3Config();
-  const upstream = await fetch(await presign(config, "GET", version.key, 120));
-  if (!upstream.ok) return new Response("Draft content missing", { status: 502 });
-  return new Response(await upstream.text(), {
+  const html = await readText(ctx, version);
+  if (html === null) return new Response("Draft content missing", { status: 502 });
+  return new Response(html, {
     status: 200,
     headers: {
       "Content-Type": raw ? "text/plain; charset=utf-8" : "text/html; charset=utf-8",

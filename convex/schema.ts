@@ -23,7 +23,9 @@ export default defineSchema({
     reason: v.optional(v.string()),
     createdBy: v.string(),
     expiresAt: v.number(),
-  }).index("by_slug", ["slug"]),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_expiresAt", ["expiresAt"]),
 
   uploadFiles: defineTable({
     slug: v.string(),
@@ -31,11 +33,13 @@ export default defineSchema({
     name: v.string(),
     size: v.number(),
     contentType: v.string(),
+    // Set in Convex storage mode; S3 rows are addressed by `key` alone.
+    storageId: v.optional(v.id("_storage")),
     uploadedAt: v.number(),
   }).index("by_slug", ["slug"]),
 
-  // A file published with `postplan asset`, in the assets bucket (not the drafts
-  // bucket). Public ones are served straight from the bucket; private ones only
+  // A file published with `postplan asset`: in S3 mode the assets bucket (not the
+  // drafts bucket), in Convex mode Convex storage. Public ones are served straight from the bucket; private ones only
   // through `/a/<slug>`, where the slug is the credential.
   assets: defineTable({
     slug: v.string(),
@@ -47,16 +51,21 @@ export default defineSchema({
     size: v.number(),
     contentType: v.string(),
     expiresAt: v.optional(v.number()),
+    // Set in Convex storage mode, where `bucket` is "convex" and `key` is only a label.
+    storageId: v.optional(v.id("_storage")),
     createdBy: v.string(),
   })
     .index("by_slug", ["slug"])
     .index("by_key", ["key"])
-    .index("by_createdBy", ["createdBy"]),
+    .index("by_createdBy", ["createdBy"])
+    .index("by_expiresAt", ["expiresAt"]),
 
   versions: defineTable({
     draftId: v.string(),
     versionNumber: v.number(),
     key: v.string(),
+    // Set in Convex storage mode; S3 versions are addressed by `key` alone.
+    storageId: v.optional(v.id("_storage")),
     sha256: v.optional(v.string()),
     bytes: v.number(),
     metadata: v.optional(v.any()),
