@@ -16,7 +16,7 @@ import {
   Ctx, ptr, show, wantObject, wantArray, wantNonEmptyArray, wantNumber, wantText,
   optionalString, optionalBoolean, wantFormat, wantTone, numberArrayOfLength,
   labelArray, seriesCap, unknownKeys, wantIsoDate, isoMs, numberArray, optionalEnum,
-  tooMany,
+  tooMany, isObject,
 } from "./common.js";
 
 
@@ -30,7 +30,21 @@ export const CHART_KINDS = /** @type {const} */ ([
 export const SCALES = /** @type {const} */ (["linear", "log2", "log10"]);
 
 /** Scatter carries its own axis titles and scales on top of the envelope. */
-const SCATTER_KEYS = ["title", "note", "caption", "format", "src", "points", "xTitle", "yTitle", "xScale", "yScale"];
+const SCATTER_KEYS = ["points", "series", "marks", "xTitle", "yTitle", "xScale", "yScale"];
+
+/** Keys `chart lines` accepts on top of the envelope. */
+const LINES_KEYS = ["labels", "x", "series", "area", "zeroFloor", "xScale", "yScale", "refs", "xTitle", "yTitle", "square"];
+
+/** `[x, y]` pairs in one series (and flat scatter points). */
+const MAX_POINTS = 1000;
+/** Scatter dots across every series: each is its own element, so the total is what costs bytes. */
+const MAX_SCATTER_POINTS = 2000;
+const MAX_REFS = 8;
+const MAX_MARKS = 32;
+/** Heatmap rows and columns: past this the cells are too thin to carry a value. */
+const MAX_CELLS_SIDE = 40;
+/** A linear axis keeps its values within this magnitude, so tick steps stay finite. */
+const LINEAR_LIMIT = 1e15;
 
 /** Keys every chart envelope carries regardless of kind. */
 const BASE_KEYS = ["title", "note", "caption", "format", "src"];
@@ -120,11 +134,13 @@ function linesBody(ctx, body) {
     if (body.xScale === "log2" || body.xScale === "log10") {
       ctx.at("/x", `expected an array of numbers for xScale ${show(body.xScale)}, got nothing`);
     }
-    if (!labelArray(ctx, body.labels, "/labels")) return;
+    refsOf(ctx, body, false, scalesOk);
+    if (tooMany(ctx, body.labels, "/labels", MAX_POINTS, "labels") || !labelArray(ctx, body.labels, "/labels")) return;
     const ok = seriesOf(ctx, body, /** @type {string[]} */ (body.labels).length, "labels", keys);
     if (ok && scalesOk) logSeries(ctx, body);
     return;
   }
+  refsOf(ctx, body, true, scalesOk);
 
   if (tooMany(ctx, body.x, "/x", 1000, "x values") || !numberArray(ctx, body.x, "/x", "an array of numbers")) return;
   const x = /** @type {number[]} */ (body.x);
@@ -143,7 +159,7 @@ function linesBody(ctx, body) {
   if (body.xScale !== "log2" && body.xScale !== "log10") {
     const bad = x.findIndex((v) => Math.abs(v) > 1e15);
     if (bad >= 0) ctx.at(ptr("", "x", bad), `expected a value within ±1e15, got ${show(x[bad])}; rescale the units`);
-    else if (x[x.length - 1] - x[0] < 1e-9) ctx.at("/x", `expected x to span at least 1e-9, got ${x[x.length - 1] - x[0]}; rescale the units`);
+    else if (x[x.length - 1] - x[0] < 1e-300) ctx.at("/x", `expected x to span at least 1e-300, got ${x[x.length - 1] - x[0]}; rescale the units`);
   }
   // Labels are optional beside `x`; when given they name each point.
   if (body.labels !== undefined && labelArray(ctx, body.labels, "/labels")) {
@@ -157,6 +173,208 @@ function linesBody(ctx, body) {
 function logSeries(ctx, body) {
   /** @type {{ values: number[] }[]} */ (body.series).forEach((s, si) =>
     positiveOnLog(ctx, s.values, body.yScale, "y", (i) => ptr("", "series", si, "values", i)));
+}
+
+/* --------------------------------------------- numeric pairs, refs and marks */
+
+const isLog = (scale) => scale === "log2" || scale === "log10";
+
+/**
+ * One number on an axis: positive and placeable on a log axis, within
+ * ±1e15 on a linear one. `v` is already known to be finite.
+ */
+function onAxis(ctx, v, scale, axis, at) {
+  if (isLog(scale)) return positiveOnLog(ctx, [v], scale, axis, () => at);
+  if (Math.abs(v) > LINEAR_LIMIT) return ctx.at(at, `expected a value within ±1e15, got ${show(v)}; rescale the units`);
+  return true;
+}
+
+/**
+ * An `[x, y]` pair of finite numbers, each placeable on its axis.
+ * @param {{ xScale?: unknown, yScale?: unknown }} scales
+ */
+function pair(ctx, p, at, scales) {
+  if (!Array.isArray(p) || p.length !== 2) return ctx.at(at, `expected an [x, y] pair, got ${show(p)}`);
+  const xOk = wantNumber(ctx, p[0], ptr(at, 0)) && onAxis(ctx, p[0], scales.xScale, "x", ptr(at, 0));
+  const yOk = wantNumber(ctx, p[1], ptr(at, 1)) && onAxis(ctx, p[1], scales.yScale, "y", ptr(at, 1));
+  return xOk && yOk;
+}
+
+/**
+ * A list of `[x, y]` pairs: capped, at least `min` long, each pair checked.
+ * @returns {boolean} true when every pair checked out
+ */
+function pairList(ctx, v, at, min, scales) {
+  if (tooMany(ctx, v, at, MAX_POINTS, "points")) return false;
+  if (!wantArray(ctx, v, at, "an array of [x, y] pairs")) return false;
+  if (v.length < min) return ctx.at(at, `expected at least ${min} [x, y] pair${min > 1 ? "s" : ""}, got ${v.length}`);
+  let ok = true;
+  v.forEach((p, i) => { if (!pair(ctx, p, ptr(at, i), scales)) ok = false; });
+  return ok;
+}
+
+/**
+ * A linear axis is ticked in steps of its span, which must stay well above
+ * zero. `zero` folds 0 into the range, as the renderer does.
+ */
+function spanOk(ctx, values, scale, zero, axis, at) {
+  if (isLog(scale) || values.length === 0) return;
+  let lo = zero ? 0 : Infinity, hi = zero ? 0 : -Infinity;
+  for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  // A constant axis is ticked by its magnitude instead of its span. Below 1e-300 a tick
+  // step is no longer a normal double and the plot would carry NaN; anything above renders.
+  const reach = hi - lo || Math.max(Math.abs(lo), Math.abs(hi));
+  if (reach > 0 && reach < 1e-300) ctx.at(at, `expected the ${axis} values to span or reach at least 1e-300, got ${reach}; rescale the units`);
+}
+
+/** True when a lines body draws `points` series rather than `values` over shared labels or x. */
+const hasPointSeries = (body) =>
+  Array.isArray(body.series) && body.series.some((s) => isObject(s) && s.points !== undefined);
+
+/**
+ * `chart lines` with per-series `points: [[x, y], ...]`, so series need not
+ * share an x (ROC curves, train and val logged at different epochs). Shared
+ * `labels` / `x` and per-series `values` belong to the other shape.
+ */
+function pointLinesBody(ctx, body) {
+  const scalesOk = optionalEnum(ctx, body.xScale, "/xScale", SCALES) && optionalEnum(ctx, body.yScale, "/yScale", SCALES);
+  for (const key of ["labels", "x"]) {
+    if (body[key] !== undefined) ctx.at(`/${key}`, `cannot be combined with series points; each series carries its own [x, y] pairs`);
+  }
+  const series = /** @type {unknown[]} */ (body.series);
+  if (!seriesCap(ctx, series.length, "/series")) return;
+  const scales = scalesOk ? body : {};
+  /** @type {number[]} */ const xs = [];
+  /** @type {number[]} */ const ys = [];
+  let ok = true;
+  series.forEach((s, i) => {
+    const at = ptr("", "series", i);
+    if (!wantObject(ctx, s, at, "a series { name, points }")) { ok = false; return; }
+    wantText(ctx, s.name, ptr(at, "name"), "a series name");
+    if (s.values !== undefined) {
+      ok = ctx.at(ptr(at, "values"), "cannot be combined with points; give every series points");
+    } else if (s.points === undefined) {
+      ok = ctx.at(ptr(at, "points"), "expected [[x, y], ...] like the other series, got nothing");
+    }
+    if (s.points !== undefined) {
+      if (pairList(ctx, s.points, ptr(at, "points"), 2, scales)) {
+        for (const [x, y] of /** @type {[number, number][]} */ (s.points)) { xs.push(x); ys.push(y); }
+      } else ok = false;
+    }
+    wantTone(ctx, s.tone, ptr(at, "tone"));
+    optionalBoolean(ctx, s.dashed, ptr(at, "dashed"));
+    // `values` is reported above in terms of this shape, so it is not unknown here too.
+    unknownKeys(ctx, s, at, s.values === undefined ? ["name", "points", "tone", "dashed"] : ["name", "points", "tone", "dashed", "values"]);
+  });
+  const refs = refsOf(ctx, body, true, scalesOk);
+  if (!ok || !refs || !scalesOk) return;
+  spanOk(ctx, [...xs, ...refs.x], body.xScale, true, "x", "/series");
+  spanOk(ctx, [...ys, ...refs.y], body.yScale, body.zeroFloor !== false, "y", "/series");
+}
+
+/**
+ * `refs`: dashed reference lines. `"diagonal"` is y = x across the plotted
+ * range, `{ "y": n }` and `{ "x": n }` are a level and a moment, each with an
+ * optional `label`. An x reference or the diagonal needs a numeric x axis.
+ *
+ * @returns {{ x: number[], y: number[] } | null} the placed values, or null on any error
+ */
+function refsOf(ctx, body, numericX, scalesOk) {
+  const out = { x: /** @type {number[]} */ ([]), y: /** @type {number[]} */ ([]) };
+  if (body.refs === undefined) return out;
+  if (tooMany(ctx, body.refs, "/refs", MAX_REFS, "refs") || !wantArray(ctx, body.refs, "/refs", "an array of refs")) return null;
+  const start = ctx.errors.length;
+  const what = `"diagonal", { "y": n } or { "x": n }`;
+  const noX = (at) => ctx.at(at, "needs a numeric x axis; give x or series points");
+  /** @type {unknown[]} */ (body.refs).forEach((r, i) => {
+    const at = ptr("", "refs", i);
+    if (r === "diagonal") {
+      if (!numericX) noX(at);
+      else if (scalesOk && (body.xScale ?? "linear") !== (body.yScale ?? "linear")) {
+        ctx.at(at, `expected the same xScale and yScale for the diagonal, got ${show(body.xScale ?? "linear")} and ${show(body.yScale ?? "linear")}`);
+      }
+      return;
+    }
+    if (!isObject(r)) { ctx.at(at, `expected ${what}, got ${show(r)}`); return; }
+    const axis = r.x !== undefined ? "x" : "y";
+    if (r.x !== undefined && r.y !== undefined) ctx.at(at, "expected one of x or y, got both; give each line its own ref");
+    else if (r.x === undefined && r.y === undefined) ctx.at(at, `expected ${what}, got an object with neither`);
+    else if (axis === "x" && !numericX) noX(ptr(at, "x"));
+    else if (wantNumber(ctx, r[axis], ptr(at, axis)) && (!scalesOk || onAxis(ctx, r[axis], body[`${axis}Scale`], axis, ptr(at, axis)))) {
+      out[axis].push(/** @type {number} */ (r[axis]));
+    }
+    optionalString(ctx, r.label, ptr(at, "label"));
+    unknownKeys(ctx, r, at, ["x", "y", "label"]);
+  });
+  return ctx.errors.length === start ? out : null;
+}
+
+/**
+ * Scatter `series: [{ name, points: [[x, y], ...], tone? }]`: coloured groups
+ * with a legend, in place of the flat `points`.
+ */
+function scatterSeries(ctx, body, scalesOk, marks) {
+  if (!wantNonEmptyArray(ctx, body.series, "/series", "at least one series")) return;
+  const series = /** @type {unknown[]} */ (body.series);
+  if (!seriesCap(ctx, series.length, "/series")) return;
+  const scales = scalesOk ? body : {};
+  let total = 0;
+  for (const s of series) if (isObject(s) && Array.isArray(s.points)) total += s.points.length;
+  if (total > MAX_SCATTER_POINTS) {
+    ctx.at("/series", `expected at most ${MAX_SCATTER_POINTS} points across all series, got ${total}; sample them`);
+    return;
+  }
+  /** @type {number[]} */ const xs = [];
+  /** @type {number[]} */ const ys = [];
+  let ok = true;
+  series.forEach((s, i) => {
+    const at = ptr("", "series", i);
+    if (!wantObject(ctx, s, at, "a series { name, points }")) { ok = false; return; }
+    wantText(ctx, s.name, ptr(at, "name"), "a series name");
+    if (pairList(ctx, s.points, ptr(at, "points"), 1, scales)) {
+      for (const [x, y] of /** @type {[number, number][]} */ (s.points)) { xs.push(x); ys.push(y); }
+    } else ok = false;
+    wantTone(ctx, s.tone, ptr(at, "tone"));
+    unknownKeys(ctx, s, at, ["name", "points", "tone"]);
+  });
+  if (!ok || !scalesOk) return;
+  // Marks share the axes, so they count toward the plotted domain.
+  spanOk(ctx, [...xs, ...marks.xs], body.xScale, false, "x", "/series");
+  spanOk(ctx, [...ys, ...marks.ys], body.yScale, false, "y", "/series");
+}
+
+/** Scatter `marks: [{ at: [x, y], label? }]`, drawn as a labelled cross (a centroid). */
+function marksOf(ctx, marks, scales, flat) {
+  /** @type {{ xs: number[], ys: number[] }} */ const out = { xs: [], ys: [] };
+  if (marks === undefined) return out;
+  if (tooMany(ctx, marks, "/marks", MAX_MARKS, "marks") || !wantArray(ctx, marks, "/marks", "an array of marks")) return out;
+  marks.forEach((m, i) => {
+    const at = ptr("", "marks", i);
+    if (!wantObject(ctx, m, at, "a mark { at: [x, y], label }")) return;
+    if (pair(ctx, m.at, ptr(at, "at"), scales)) {
+      const [x, y] = /** @type {[number, number]} */ (m.at);
+      // Flat points are drawn on axes that start at 0, so a negative mark would land off the plot.
+      if (flat && (x < 0 || y < 0)) ctx.at(ptr(at, "at"), `expected coordinates of 0 or more beside flat points, got [${x}, ${y}]; use series for negative data`);
+      out.xs.push(x); out.ys.push(y);
+    }
+    optionalString(ctx, m.label, ptr(at, "label"));
+    unknownKeys(ctx, m, at, ["at", "label"]);
+  });
+  return out;
+}
+
+/**
+ * Heatmap `emphasis` and `decimals`. `decimals` prints every cell to that many
+ * places (attention weights of 0.05 beside 0.6), so it replaces `format`.
+ */
+function heatmapExtras(ctx, body) {
+  optionalEnum(ctx, body.emphasis, "/emphasis", ["diagonal"]);
+  if (body.decimals === undefined) return;
+  if (!Number.isInteger(body.decimals) || /** @type {number} */ (body.decimals) < 0 || /** @type {number} */ (body.decimals) > 6) {
+    ctx.at("/decimals", `expected an integer from 0 to 6, got ${show(body.decimals)}`);
+  } else if (body.format !== undefined) {
+    ctx.at("/decimals", "cannot be combined with format; decimals prints every cell as a plain number");
+  }
 }
 
 /** Per-kind body checks, keyed by sub-kind. Each returns the extra keys it allows. */
@@ -190,13 +408,25 @@ const KINDS = {
   },
 
   lines(ctx, body) {
-    linesBody(ctx, body);
+    optionalString(ctx, body.xTitle, "/xTitle");
+    optionalString(ctx, body.yTitle, "/yTitle");
+    optionalBoolean(ctx, body.square, "/square");
+    if (hasPointSeries(body)) pointLinesBody(ctx, body);
+    else {
+      linesBody(ctx, body);
+      if (Array.isArray(body.series)) {
+        const yRefs = Array.isArray(body.refs) ? body.refs.filter(isObject).map((r) => r.y) : [];
+        const vals = [...body.series.flatMap((s) => (isObject(s) && Array.isArray(s.values) ? s.values : [])), ...yRefs]
+          .filter((v) => typeof v === "number" && Number.isFinite(v));
+        spanOk(ctx, vals, body.yScale, body.zeroFloor !== false, "y", "/series");
+      }
+    }
     optionalBoolean(ctx, body.area, "/area");
     optionalBoolean(ctx, body.zeroFloor, "/zeroFloor");
     if (body.zeroFloor === true && (body.yScale === "log2" || body.yScale === "log10")) {
       ctx.at("/zeroFloor", `has no effect on a ${body.yScale} y axis, which cannot reach 0; drop it`);
     }
-    return ["labels", "x", "series", "area", "zeroFloor", "xScale", "yScale"];
+    return LINES_KEYS;
   },
 
   grouped(ctx, body) {
@@ -232,23 +462,26 @@ const KINDS = {
   },
 
   heatmap(ctx, body) {
-    const rowsOk = labelArray(ctx, body.rows, "/rows", "row label");
-    const colsOk = labelArray(ctx, body.cols, "/cols", "column label");
-    if (!rowsOk || !colsOk) return ["rows", "cols", "values"];
+    const keys = ["rows", "cols", "values", "emphasis", "decimals"];
+    heatmapExtras(ctx, body);
+    const rowsOk = !tooMany(ctx, body.rows, "/rows", MAX_CELLS_SIDE, "rows") && labelArray(ctx, body.rows, "/rows", "row label");
+    const colsOk = !tooMany(ctx, body.cols, "/cols", MAX_CELLS_SIDE, "cols") && labelArray(ctx, body.cols, "/cols", "column label");
+    if (!rowsOk || !colsOk) return keys;
     const rows = /** @type {string[]} */ (body.rows);
     const cols = /** @type {string[]} */ (body.cols);
-    if (!wantArray(ctx, body.values, "/values", `${rows.length} rows to match rows`)) {
-      return ["rows", "cols", "values"];
+    if (body.emphasis === "diagonal" && rows.length !== cols.length) {
+      ctx.at("/emphasis", `expected as many rows as cols for the diagonal, got ${rows.length} rows and ${cols.length} cols`);
     }
+    if (!wantArray(ctx, body.values, "/values", `${rows.length} rows to match rows`)) return keys;
     const values = /** @type {unknown[]} */ (body.values);
     if (values.length !== rows.length) {
       ctx.at("/values", `expected ${rows.length} rows to match rows, got ${values.length}`);
-      return ["rows", "cols", "values"];
+      return keys;
     }
     values.forEach((row, y) => {
       numberArrayOfLength(ctx, row, ptr("", "values", y), cols.length, "cols");
     });
-    return ["rows", "cols", "values"];
+    return keys;
   },
 
   waterfall(ctx, body) {
@@ -273,14 +506,26 @@ const KINDS = {
   scatter(ctx, body) {
     optionalString(ctx, body.xTitle, "/xTitle");
     optionalString(ctx, body.yTitle, "/yTitle");
-    const xLog = optionalEnum(ctx, body.xScale, "/xScale", SCALES) && body.xScale;
-    const yLog = optionalEnum(ctx, body.yScale, "/yScale", SCALES) && body.yScale;
+    const scalesOk = optionalEnum(ctx, body.xScale, "/xScale", SCALES) && optionalEnum(ctx, body.yScale, "/yScale", SCALES);
+    const xLog = scalesOk && body.xScale;
+    const yLog = scalesOk && body.yScale;
+    const marks = marksOf(ctx, body.marks, scalesOk ? body : {}, body.series === undefined);
+    if (body.series !== undefined) {
+      if (body.points !== undefined) ctx.at("/points", "cannot be combined with series; give each group its own points");
+      scatterSeries(ctx, body, scalesOk, marks);
+      return SCATTER_KEYS;
+    }
+    if (tooMany(ctx, body.points, "/points", MAX_POINTS, "points")) return SCATTER_KEYS;
     if (!wantNonEmptyArray(ctx, body.points, "/points", "at least one point")) return SCATTER_KEYS;
     /** @type {unknown[]} */ (body.points).forEach((p, i) => {
       const at = ptr("", "points", i);
       if (!wantObject(ctx, p, at, "a point { x, y }")) return;
       if (wantNumber(ctx, p.x, ptr(at, "x"))) positiveOnLog(ctx, [p.x], xLog, "x", () => ptr(at, "x"));
       if (wantNumber(ctx, p.y, ptr(at, "y"))) positiveOnLog(ctx, [p.y], yLog, "y", () => ptr(at, "y"));
+      // Flat points are drawn on axes that start at 0; a negative one would land off the plot.
+      for (const k of /** @type {const} */ (["x", "y"])) {
+        if (typeof p[k] === "number" && p[k] < 0 && !(k === "x" ? xLog : yLog)) ctx.at(ptr(at, k), `expected 0 or more for flat points, got ${show(p[k])}; use series for negative data`);
+      }
       if (p.size !== undefined && wantNumber(ctx, p.size, ptr(at, "size"))) {
         // Bubble area is sqrt(size / max); a negative radius is not drawable.
         if (/** @type {number} */ (p.size) < 0) ctx.at(ptr(at, "size"), `expected a size of 0 or more, got ${show(p.size)}`);
@@ -288,6 +533,10 @@ const KINDS = {
       optionalString(ctx, p.label, ptr(at, "label"));
       unknownKeys(ctx, p, at, ["x", "y", "size", "label"]);
     });
+    const num = (v) => typeof v === "number" && Number.isFinite(v);
+    const pts = /** @type {{ x?: unknown, y?: unknown }[]} */ (body.points).filter(isObject);
+    spanOk(ctx, [...pts.map((p) => p.x).filter(num), ...marks.xs], body.xScale, true, "x", "/points");
+    spanOk(ctx, [...pts.map((p) => p.y).filter(num), ...marks.ys], body.yScale, true, "y", "/points");
     return SCATTER_KEYS;
   },
 

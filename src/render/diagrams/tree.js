@@ -2,9 +2,12 @@
  * `tree` fence: any rooted tree, laid out by code from a one-line shorthand
  * (`Root(A,B(C,D))`) or nested node objects.
  *
+ * Shape `text` is a bare label with no outline, for parse trees.
+ *
  * Three layouts: `tidy` (d3 `tree()`, parent centred over its children),
  * `spine` (a Schwartz tree, parent directly above its first child) and
- * `leaves` (d3 `cluster()`, every leaf on the deepest row, for parse trees).
+ * `leaves` (d3 `cluster()` breadths, every leaf on the deepest row and every
+ * other node on its own depth's row, for parse trees).
  * Breadth spacing comes from the measured size of each node and of whatever is
  * printed beside its edge, so labels never collide however lopsided the tree.
  *
@@ -27,7 +30,7 @@ import {
   INK, DIAGRAM_TONES, inkOf, markers, text, badge, clip, svgOpen, figure, bounds, textW, n,
 } from "./svg.js";
 
-export const SHAPES = /** @type {const} */ (["box", "round", "circle", "ellipse", "dot", "cells"]);
+export const SHAPES = /** @type {const} */ (["box", "round", "circle", "ellipse", "dot", "cells", "text"]);
 export const DIRS = /** @type {const} */ (["down", "up", "right", "left"]);
 export const LAYOUTS = /** @type {const} */ (["tidy", "spine", "leaves"]);
 export const ARROWS = /** @type {const} */ (["none", "toParent", "toChild"]);
@@ -333,6 +336,7 @@ function measure(nd) {
     case "circle": { const d = Math.max(30, tw + 14); return { w: d, h: d, labelW: tw }; }
     case "ellipse": return { w: Math.max(46, tw + 26), h: 26, labelW: tw };
     case "cells": return { w: 16 + (tw ? tw + 10 : 0) + nd.cells.length * cellW(nd), h: 32, labelW: tw };
+    case "text": return { w: Math.max(12, tw + 8), h: 18, labelW: tw };
     default: return { w: Math.max(40, tw + 22), h: 30, labelW: tw };
   }
 }
@@ -429,7 +433,12 @@ export function layoutTree(spec) {
     const h = hierarchy(root, (p) => p.kids);
     const algo = spec.layout === "leaves" ? cluster() : d3tree();
     algo.nodeSize([1, 1]).separation((a, b) => separation(a.data, b.data, vertical))(h);
-    h.each((hn) => { hn.data.b = /** @type {number} */ (hn.x); hn.data.row = Math.round(/** @type {number} */ (hn.y)); });
+    // Leaves: words drop to the bottom row, constituents stay at their depth, as a parse tree is drawn.
+    const bottom = h.height;
+    h.each((hn) => {
+      hn.data.b = /** @type {number} */ (hn.x);
+      hn.data.row = spec.layout === "leaves" ? (hn.children ? hn.depth : bottom) : Math.round(/** @type {number} */ (hn.y));
+    });
   }
 
   const rows = Math.max(...all.map((p) => p.row)) + 1;
@@ -481,7 +490,7 @@ function textRect(x, baseline, t, size, anchor = "middle", mono = false) {
   return { x0, y0: baseline - size * 0.85, x1: x0 + w, y1: baseline + size * 0.25 };
 }
 
-const rectKind = (p) => (p.n.shape === "box" || p.n.shape === "round" || p.n.shape === "cells" ? "rect" : "ellipse");
+const rectKind = (p) => (p.n.shape === "box" || p.n.shape === "round" || p.n.shape === "cells" || p.n.shape === "text" ? "rect" : "ellipse");
 
 /**
  * Where a ray from `p`'s centre toward (ux, uy) leaves it. A `below` line
@@ -498,7 +507,7 @@ function exit(p, ux, uy) {
   return clip(p, ux, uy, rectKind(p));
 }
 
-/** Node outline, label, cells and `below` line. */
+/** Node outline, label, cells and `below` line. A `text` node has no outline; its tone colours the label instead. */
 function drawNode(p, rects) {
   const { n: nd, x, y, w, h } = p;
   const stroke = inkOf(nd.tone, INK.box);
@@ -511,6 +520,8 @@ function drawNode(p, rects) {
       s += text(x + 9, y + 4.5, nd.label, { cls: "node-label", mono, size, anchor: "start" });
       rects.push(textRect(x + 9, y + 4.5, nd.label, labelPx(nd), "start", mono));
     }
+  } else if (nd.shape === "text") {
+    // Nothing to draw round it; edges stop just short of the words.
   } else if (nd.shape === "circle" || nd.shape === "ellipse") {
     s += `<ellipse cx="${n(x)}" cy="${n(y)}" rx="${n(w / 2)}" ry="${n(h / 2)}" fill="${INK.fill}" stroke="${stroke}" stroke-width="1.5"/>`;
   } else {
@@ -530,7 +541,7 @@ function drawNode(p, rects) {
       cx += cw;
     }
   } else if (nd.shape !== "dot" && nd.label) {
-    s += text(x, y + 4.5, nd.label, { cls: "node-label", mono, size });
+    s += text(x, y + 4.5, nd.label, { cls: "node-label", mono, size, color: nd.shape === "text" ? inkOf(nd.tone, INK.text) : undefined });
   }
   if (nd.below) {
     const by = y + h / 2 + 15;

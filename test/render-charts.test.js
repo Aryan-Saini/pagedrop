@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseMarkdown } from "../src/render/parse.js";
 import {
-  FORMATS, SERIES, TONE_INK, compact, formatter, inkOn, logTicks, meter, renderChart, seriesColor, sparkline, ticks,
+  FORMATS, SERIES, TONE_INK, compact, fixed, formatter, inkOn, logTicks, meter, renderChart, seriesColor, sparkline, ticks,
 } from "../src/render/charts.js";
 import { validateChart } from "../src/render/schema/chart.js";
 import { CSS } from "../src/render/shell.js";
@@ -365,4 +365,214 @@ test("numeric x must increase and set the series length", () => {
   // `dashed` belongs to lines only.
   assert.deepEqual(chartErrs("grouped", { labels: ["a"], series: [{ name: "s", values: [1], dashed: true }] }),
     ['/series/0/dashed unknown key "dashed"; keys: name values tone']);
+});
+
+/* ------------------------------------------------ ML evaluation additions */
+
+const chart = (kind, data) => renderChart({ type: "chart", kind, data });
+
+test("heatmap emphasis outlines exactly the diagonal, under the cell values", () => {
+  const data = { format: "int", rows: ["cat", "dog", "bird"], cols: ["cat", "dog", "bird"], values: [[88, 7, 5], [9, 85, 6], [3, 4, 93]] };
+  const html = chart("heatmap", { ...data, emphasis: "diagonal" });
+  const outlines = [...html.matchAll(/<rect x="([\d.]+)" y="([\d.]+)"[^>]*fill="none" stroke="#0ca30c"/g)];
+  assert.equal(outlines.length, 3);
+  // One per row and column, and each drawn before its value so the number sits on top.
+  assert.equal(new Set(outlines.map((m) => m[1])).size, 3);
+  assert.equal(new Set(outlines.map((m) => m[2])).size, 3);
+  assert.match(html, /fill="none" stroke="#0ca30c" stroke-width="2"\/><text [^>]*class="cell-val"[^>]*>88</);
+  assert.doesNotMatch(chart("heatmap", data), /stroke="#0ca30c"/);
+});
+
+test("heatmap decimals print every cell to the same places, never -0", () => {
+  const html = chart("heatmap", { decimals: 2, rows: ["q"], cols: ["a", "b", "c"], values: [[0.6, 0.05, 0.004]] });
+  const cells = [...html.matchAll(/class="cell-val"[^>]*>([^<]+)</g)].map((m) => m[1]);
+  assert.deepEqual(cells, ["0.60", "0.05", "0.00"]);
+  assert.equal(fixed(2)(-0.001), "0.00");
+  assert.equal(fixed(0)(41.6), "42");
+});
+
+const ROC = {
+  xTitle: "false positive rate", yTitle: "true positive rate", square: true, refs: ["diagonal"],
+  series: [
+    { name: "A", points: [[0, 0], [0.05, 0.6], [0.2, 0.9], [1, 1]] },
+    { name: "B", points: [[0, 0], [0.3, 0.6], [1, 1]] },
+  ],
+};
+
+test("point series draw on their own x, named in a legend, with no end labels", () => {
+  const html = chart("lines", ROC);
+  const paths = [...html.matchAll(/<path d="([^"]+)" fill="none"[^>]*><title>([^<]+)<\/title>/g)];
+  assert.deepEqual(paths.map((m) => m[2]), ["A", "B"]);
+  assert.deepEqual(paths.map((m) => m[1].split(" ").length), [4, 3]);
+  assert.equal((html.match(/class="key"/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /val-left|r="9"/);
+  // A single point series still gets its legend: the name is the only label it has.
+  assert.match(chart("lines", { series: [ROC.series[0]] }), /class="key"/);
+});
+
+test("square makes the plot as wide as it is tall and the diagonal runs corner to corner", () => {
+  const html = chart("lines", ROC);
+  const axis = html.match(/<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="[\d.]+" class="axis"\/>/).slice(1).map(Number);
+  const grid = [...html.matchAll(/y1="([\d.]+)"[^>]*class="grid"/g)].map((m) => Number(m[1]));
+  const [x0, y1, x1] = axis;
+  const y0 = Math.min(...grid);
+  assert.ok(Math.abs((x1 - x0) - (y1 - y0)) < 0.02, `plot ${x1 - x0} wide, ${y1 - y0} tall`);
+  const diag = html.match(/<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)" stroke="#6f6f6a"[^>]*stroke-dasharray="5 4"/).slice(1).map(Number);
+  assert.deepEqual(diag, [x0, y1, x1, y0]);
+  assert.match(html, /style="max-width:[\d.]+px;margin:0 auto"[^>]*class="chart compact"/);
+  assert.match(html, /rotate\(-90\)[^>]*>true positive rate</);
+  assert.match(html, /class="tick tick-x">false positive rate</);
+});
+
+test("ref labels step aside from the lines they would sit on", () => {
+  // The curve ends on the baseline at the right, so the label moves to the left end.
+  const pr = chart("lines", { square: true, refs: [{ y: 0.3, label: "no skill" }], series: [{ name: "AP", points: [[0, 1], [0.5, 0.9], [1, 0.3]] }] });
+  assert.match(pr, /class="tick" text-anchor="start">no skill</);
+  // Nothing in the way: the default is the right end.
+  const flat = chart("lines", { refs: [{ y: 0.3, label: "floor" }], series: [{ name: "s", points: [[0, 1], [1, 0.9]] }] });
+  assert.match(flat, /class="tick" text-anchor="end">floor</);
+  for (const html of [pr, flat]) {
+    for (const t of textExtents(svgsOf(html)[0])) assert.ok(t.lo >= t.min && t.hi <= t.max, `"${t.text}" leaves the viewBox`);
+  }
+});
+
+test("an x ref widens the axis to reach it and works on a log y axis", () => {
+  const html = chart("lines", {
+    yScale: "log10", refs: [{ x: 80, label: "early stop" }],
+    series: [{ name: "train", points: [[1, 2.1], [10, 0.4], [40, 0.05]] }, { name: "val", points: [[5, 1.2], [30, 0.3]] }],
+  });
+  assert.match(html, /class="tick tick-x">80</);
+  assert.match(html, /class="tick tick-y">0.01</);
+  assert.match(html, />early stop</);
+  assert.doesNotMatch(html, /NaN|Infinity/);
+});
+
+test("a y ref on a categorical axis is folded into the y range", () => {
+  const html = chart("lines", { labels: ["a", "b"], refs: [{ y: 500, label: "budget" }], series: [{ name: "s", values: [10, 20] }] });
+  const ref = Number(html.match(/<line x1="[\d.]+" y1="([\d.]+)"[^>]*stroke-dasharray="5 4"/)[1]);
+  assert.ok(ref >= 16 && ref < 206, `ref at y ${ref}`);
+  assert.match(html, />budget</);
+});
+
+test("the new keys at their defaults render exactly what their absence does", () => {
+  const off = { refs: [], xTitle: "", yTitle: "", square: false };
+  for (const kind of ["lines", "scatter"]) {
+    const block = chartsByKind.get(kind);
+    assert.equal(renderChart({ ...block, data: { ...off, marks: [], ...block.data } }), renderChart(block));
+  }
+  const heat = chartsByKind.get("heatmap");
+  assert.equal(renderChart({ ...heat, data: { ...heat.data, emphasis: "" } }), renderChart(heat));
+});
+
+test("scatter series colour their groups, share one legend and carry centroid marks", () => {
+  const html = chart("scatter", {
+    series: [
+      { name: "sports", points: [[-4, 2], [-3.5, 2.4], [-3, 1.6]] },
+      { name: "finance", points: [[3, 3], [3.6, 3.8]], tone: "bad" },
+    ],
+    marks: [{ at: [-3.5, 2], label: "k1" }, { at: [3.3, 3.4] }],
+  });
+  assert.equal((html.match(/<circle /g) ?? []).length, 5);
+  assert.match(html, /<g fill="#3987e5"[^>]*><title>sports<\/title>/);
+  assert.match(html, /<g fill="#d03b3b"[^>]*><title>finance<\/title>/);
+  assert.equal((html.match(/class="key"/g) ?? []).length, 2);
+  // Each mark is a black-outlined white cross; only the labelled one prints text.
+  assert.equal((html.match(/stroke="#fff" stroke-width="2.5"/g) ?? []).length, 2);
+  assert.match(html, /class="tick" text-anchor="start">k1</);
+  // The axes fit the cloud rather than starting at zero.
+  const xs = [...html.matchAll(/class="tick tick-x">([^<]+)</g)].map((m) => Number(m[1]));
+  assert.ok(xs[0] < -3.9 && xs[0] >= -5 && xs.at(-1) >= 3.6 && xs.at(-1) <= 5, `x ticks ${xs}`);
+});
+
+test("a negative low point on a zero-floored numeric x still ticks on round steps", () => {
+  const html = chart("lines", { x: [-3.7, 0, 4], series: [{ name: "s", values: [1, 2, 3] }] });
+  const xs = [...html.matchAll(/class="tick tick-x">([^<]+)</g)].map((m) => m[1]);
+  assert.deepEqual(xs, ["-4", "-2", "0", "2", "4"]);
+});
+
+test("ML additions are rejected with a pointer when malformed", () => {
+  const pts = (k) => Array.from({ length: k }, (_, i) => [i, i]);
+  const cases = [
+    ["lines", { labels: ["a", "b"], series: [{ name: "s", points: [[0, 1], [1, 2]] }] }, '/labels cannot be combined with series points; each series carries its own [x, y] pairs'],
+    ["lines", { series: [{ name: "a", points: [[0, 1], [1, 2]] }, { name: "b", values: [1, 2] }] }, "/series/1/values cannot be combined with points; give every series points"],
+    ["lines", { series: [{ name: "s", points: [[0, 1], [1]] }] }, "/series/0/points/1 expected an [x, y] pair, got an array of 1"],
+    ["lines", { series: [{ name: "s", points: [[0, 1]] }] }, "/series/0/points expected at least 2 [x, y] pairs, got 1"],
+    ["lines", { series: [{ name: "s", points: pts(1001) }] }, "/series/0/points expected at most 1000 points, got 1001"],
+    ["lines", { series: [{ name: "s", points: [[0, 1], [1e16, 2]] }] }, "/series/0/points/1/0 expected a value within ±1e15, got 10000000000000000; rescale the units"],
+    ["lines", { yScale: "log10", series: [{ name: "s", points: [[0, 1], [1, 0]] }] }, "/series/0/points/1/1 expected a value > 0 on the log10 y axis, got 0"],
+    ["lines", { series: [{ name: "s", points: [[0, 1], [1e-320, 1]] }] }, "/series expected the x values to span or reach at least 1e-300, got 1e-320; rescale the units"],
+    ["lines", { labels: ["a", "b"], refs: ["diagonal"], series: [{ name: "s", values: [1, 2] }] }, "/refs/0 needs a numeric x axis; give x or series points"],
+    ["lines", { labels: ["a", "b"], refs: [{ x: 1 }], series: [{ name: "s", values: [1, 2] }] }, "/refs/0/x needs a numeric x axis; give x or series points"],
+    ["lines", { yScale: "log10", refs: ["diagonal"], series: [{ name: "s", points: [[1, 1], [2, 2]] }] }, '/refs/0 expected the same xScale and yScale for the diagonal, got "linear" and "log10"'],
+    ["lines", { refs: [{ x: 1, y: 2 }], series: [{ name: "s", points: [[0, 1], [1, 2]] }] }, "/refs/0 expected one of x or y, got both; give each line its own ref"],
+    ["lines", { refs: ["diag"], series: [{ name: "s", points: [[0, 1], [1, 2]] }] }, '/refs/0 expected "diagonal", { "y": n } or { "x": n }, got "diag"'],
+    ["lines", { refs: Array(9).fill("diagonal"), series: [{ name: "s", points: [[0, 1], [1, 2]] }] }, "/refs expected at most 8 refs, got 9"],
+    ["lines", { yScale: "log2", refs: [{ y: -1 }], series: [{ name: "s", points: [[0, 1], [1, 2]] }] }, "/refs/0/y expected a value > 0 on the log2 y axis, got -1"],
+    ["lines", { square: "yes", labels: ["a"], series: [{ name: "s", values: [1] }] }, '/square expected true or false, got "yes"'],
+    ["scatter", { points: [{ x: 1, y: 1 }], series: [{ name: "s", points: [[1, 1]] }] }, "/points cannot be combined with series; give each group its own points"],
+    ["scatter", { series: [{ name: "a", points: pts(1000) }, { name: "b", points: pts(1000) }, { name: "c", points: pts(1) }] }, "/series expected at most 2000 points across all series, got 2001; sample them"],
+    ["scatter", { series: [{ name: "s", points: [[1, 1]] }], marks: [{ at: [1] }] }, "/marks/0/at expected an [x, y] pair, got an array of 1"],
+    ["scatter", { series: [{ name: "s", points: [[1, 1]] }], marks: Array(33).fill({ at: [1, 1] }) }, "/marks expected at most 32 marks, got 33"],
+    ["scatter", { points: Array(1001).fill({ x: 1, y: 1 }) }, "/points expected at most 1000 points, got 1001"],
+    ["heatmap", { rows: ["a", "b"], cols: ["a"], values: [[1], [2]], emphasis: "diagonal" }, "/emphasis expected as many rows as cols for the diagonal, got 2 rows and 1 cols"],
+    ["heatmap", { rows: ["a"], cols: ["a"], values: [[1]], emphasis: "rows" }, '/emphasis expected one of diagonal, got "rows"'],
+    ["heatmap", { rows: ["a"], cols: ["a"], values: [[1]], decimals: 7 }, "/decimals expected an integer from 0 to 6, got 7"],
+    ["heatmap", { rows: ["a"], cols: ["a"], values: [[1]], decimals: 2, format: "pct" }, "/decimals cannot be combined with format; decimals prints every cell as a plain number"],
+    ["heatmap", { rows: Array(41).fill("r"), cols: ["a"], values: [] }, "/rows expected at most 40 rows, got 41"],
+  ];
+  for (const [kind, data, expected] of cases) assert.deepEqual(chartErrs(kind, data), [expected], `${kind} ${JSON.stringify(data).slice(0, 80)}`);
+});
+
+test("malformed ML bodies are diagnostics, never throws", () => {
+  const junk = [null, 1, "x", [], {}, [null], [[null, null]], [{}], { at: null }];
+  for (const v of junk) {
+    for (const [kind, key] of [["lines", "series"], ["lines", "refs"], ["scatter", "series"], ["scatter", "marks"], ["heatmap", "emphasis"], ["heatmap", "decimals"]]) {
+      const base = kind === "heatmap" ? { rows: ["a"], cols: ["a"], values: [[1]] } : { series: [{ name: "s", points: [[0, 1], [1, 2]] }] };
+      assert.doesNotThrow(() => chartErrs(kind, { ...base, [key]: v }));
+      assert.doesNotThrow(() => chartErrs(kind, { series: [{ name: "s", points: v }], refs: [v], marks: [{ at: v, label: v }] }));
+    }
+  }
+});
+
+test("a negative y reference pulls the baseline below zero, and wide heatmap headers sit over their cells", () => {
+  const neg = chart("lines", { labels: ["a", "b"], series: [{ name: "s", values: [1, 2] }], refs: [{ y: -1, label: "threshold" }] });
+  const y = Number(/y="([\d.]+)"[^>]*>threshold</.exec(neg)?.[1]);
+  const top = Number(/viewBox="[-\d.]+ [-\d.]+ [\d.]+ ([\d.]+)"/.exec(neg)?.[1]);
+  assert.ok(y > 0 && y < top, `threshold label at y=${y} must sit inside a ${top} tall chart`);
+
+  const hm = chart("heatmap", { rows: ["r"], cols: Array.from({ length: 20 }, (_, i) => "c" + i), values: [Array(20).fill(0.123456)], decimals: 6 });
+  const xs = [...hm.matchAll(/<text x="([\d.]+)"[^>]*class="tick tick-x">c/g)].map((m) => Number(m[1]));
+  assert.equal(new Set(xs).size, 20);
+});
+
+test("a constant axis too small to tick is rejected, not drawn with NaN", () => {
+  for (const v of [1e-320, 5e-324]) {
+    assert.match(chartErrs("lines", { zeroFloor: false, series: [{ name: "s", points: [[0, v], [1, v]] }] })[0], /span or reach at least 1e-300/);
+    assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[v, v]] }] })[0], /span or reach at least 1e-300/);
+  }
+  // Above the floor tiny data renders: constant 1e-10, and a 2e-22 span the old tick loop could not finish.
+  for (const values of [[1e-10, 1e-10], [0.000001, 0.0000010000000000000002]]) {
+    for (const zeroFloor of [true, false]) {
+      const body = { labels: ["a", "b"], series: [{ name: "s", values }], zeroFloor };
+      assert.deepEqual(chartErrs("lines", body), []);
+      assert.doesNotMatch(chart("lines", body), /NaN|Infinity/);
+    }
+  }
+  // Marks count toward the plotted domain, and beside flat points they must sit on the 0-based axes.
+  assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[0, 0]] }], marks: [{ at: [5e-324, 5e-324] }] })[0], /reach at least 1e-300/);
+  assert.match(chartErrs("scatter", { points: [{ x: 1, y: 1 }], marks: [{ at: [-10, -10] }] })[0], /^\/marks\/0\/at expected coordinates of 0 or more/);
+});
+
+test("extreme but valid ML bodies render finite geometry", () => {
+  const bodies = [
+    ["lines", { series: [{ name: "s", points: [[-1e15, -1e15], [1e15, 1e15]] }], refs: ["diagonal", { x: 0, label: "z" }, { y: 0, label: "z" }] }],
+    ["lines", { zeroFloor: false, series: [{ name: "s", points: [[0, 2e-9], [1, 2e-9]] }] }],
+    ["lines", { xScale: "log10", yScale: "log10", refs: ["diagonal"], series: [{ name: "s", points: [[1e-100, 1e100], [1e100, 1e-100]] }] }],
+    ["scatter", { series: [{ name: "s", points: [[5, 5]] }], marks: [{ at: [5, 5], label: "only" }] }],
+    ["scatter", { xScale: "log2", series: [{ name: "s", points: [[1e-100, -1e15], [1e100, 1e15]] }] }],
+  ];
+  for (const [kind, data] of bodies) {
+    assert.deepEqual(chartErrs(kind, data), [], kind);
+    assert.doesNotMatch(chart(kind, data), /NaN|Infinity/, JSON.stringify(data).slice(0, 80));
+  }
 });

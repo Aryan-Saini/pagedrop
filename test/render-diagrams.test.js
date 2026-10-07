@@ -133,3 +133,31 @@ test("diagram markup is only cached inside one render() call", async () => {
   block.data.items[0].label = "CHANGED";
   assert.match(renderBlock(block), /CHANGED/);
 });
+
+test("a heatmap with a very long row label keeps positive cell widths", () => {
+  const r = one("chart heatmap", { rows: ["x".repeat(200), "b"], cols: ["c0", "c1"], values: [[1, 2], [3, 4]] });
+  assert.equal(r.errors.length, 0);
+  assert.doesNotMatch(r.html, /width="-/);
+});
+
+test("charts share the per-figure budget, and heatmap cells fit their printed values", () => {
+  const labels = Array.from({ length: 1000 }, (_, i) => "l" + i);
+  const big = one("chart lines", { labels, series: Array.from({ length: 5 }, (_, k) => ({ name: "s" + k, values: labels.map((_, i) => i + k) })) });
+  assert.equal(big.errors.length, 1);
+  assert.equal(big.errors[0].line, 7);
+  assert.match(big.errors[0].message, /^renders to \d+ KB; one figure may take 320 KB/);
+
+  const dec = one("chart heatmap", { decimals: 6, rows: ["a"], cols: ["a", "b", "c"], values: [[0.123456, 0.654321, 0.999999]] });
+  const cells = [...dec.html.matchAll(/<rect x="([\d.]+)" y="[\d.]+" width="([\d.]+)" height="34"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.equal(cells.length, 3);
+  for (const [, w] of cells) assert.ok(w >= 8 * 11 * 0.56, `cell ${w} wide is narrower than "0.123456"`);
+  for (let i = 1; i < cells.length; i++) assert.ok(cells[i][0] >= cells[i - 1][0] + cells[i - 1][1], "cells overlap");
+});
+
+test("flat scatter rejects negative points; heatmap cells make room for their headers", () => {
+  assert.ok(one("chart scatter", { points: [{ x: -1, y: 1 }, { x: 1, y: 1 }] }).errors.some((e) => e.message.startsWith("/points/0/x expected 0 or more")));
+  const cols = Array.from({ length: 40 }, (_, i) => "c" + i);
+  const hm = one("chart heatmap", { rows: ["a"], cols, values: [cols.map((_, i) => i % 7)] });
+  const xs = [...hm.html.matchAll(/<text x="([\d.]+)"[^>]*class="tick tick-x">c/g)].map((m) => Number(m[1]));
+  for (let i = 1; i < xs.length; i++) assert.ok(xs[i] - xs[i - 1] >= 3 * 12 * 0.56, `headers ${i - 1} and ${i} overprint`);
+});

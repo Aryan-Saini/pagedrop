@@ -114,6 +114,14 @@ The other thirteen kinds take that fence and envelope with this body:
 // log axes:  lines and scatter take xScale / yScale linear|log2|log10; lines takes numeric x,
 //            which a log x needs; a dashed series is a reference line
 {"xScale":"log2","yScale":"log2","x":[1,4,16,64],"series":[{"name":"Ideal","values":[1,4,16,64],"dashed":true}]}
+// ML lines:  each series may carry its own points instead of labels / x (ROC, train vs val);
+//            refs: "diagonal" | {"y":n,"label"?} | {"x":n,"label"?}; square makes the plot 1:1
+{"xTitle":"FPR","yTitle":"TPR","square":true,"refs":["diagonal"],"series":[{"name":"AUC 0.91","points":[[0,0],[0.1,0.7],[0.3,0.88],[1,1]]}]}
+// ML heatmap: emphasis "diagonal" outlines row = col cells (a confusion matrix); decimals 0..6
+//            prints every cell to that many places (attention weights) and replaces format
+{"rows":["cat","dog"],"cols":["cat","dog"],"values":[[88,12],[9,91]],"emphasis":"diagonal"}
+// ML scatter: series [{name, points, tone}] colour groups with a legend; marks [{at:[x,y],label}] are crosses
+{"series":[{"name":"sports","points":[[1,2],[1.4,2.2]]},{"name":"finance","points":[[5,6],[5.3,5.8]]}],"marks":[{"at":[1.2,2.1],"label":"k1"}]}
 // schedule:  ISO dates, ticks fall on month boundaries
 {"tasks":[{"label":"Convex backend","start":"2026-08-14","end":"2026-08-29","done":true}]}
 ```
@@ -174,14 +182,20 @@ Mermaid does not render here. Pick the fence by what you are drawing:
 | Sorting network | `sortnet` |
 | Ring, mesh, torus, hypercube, star, complete, tree interconnect | `topology` |
 | Flow volumes between stages | `sankey` |
+| Token row: dependency parse, subword spans, POS/NER tags, attention, alignment | `tokens` |
+| Fully connected network, autoencoder | `nn` |
+| Tensor shapes through a CNN | `tensors` |
+| HMM / Viterbi lattice | `trellis` |
+| Transformer or ResNet block, unrolled RNN | `graph` with `groups`, `fill`, `rank` |
+| Confusion matrix, ROC/PR, loss curves, embedding clusters | `chart` (section 3 and below) |
 
 Every fence below takes `title`, `note` and `compact`. Tones are `good warn bad
 flat span c1`…`c8` (`span` is the critical-path amber). Consecutive fences with
 `"compact": true` share a row, for snapshots and small multiples. Unknown keys
 fail the render.
 
-**Limits**, each reported at the fence when crossed: one diagram may render to
-320 KB. `tree` 400 nodes, 32 deep, 32 cells a node. `graph` 150 nodes, 300
+**Limits**, each reported at the fence when crossed: one diagram or chart may
+render to 320 KB. `tree` 400 nodes, 32 deep, 32 cells a node. `graph` 150 nodes, 300
 edges, no control characters in ids. `lanes` 24 lanes, 200 segments a lane, 100
 messages, names up to 40 characters, times within ±1e9. `structure` 64 cells,
 64 pointers. `pipeline` 64 rows, 128 steps, 2048 filled cells. `layers` 32.
@@ -189,7 +203,16 @@ messages, names up to 40 characters, times within ±1e9. `structure` 64 cells,
 wires, 64 layers. `topology` paths of 128 hops. `sankey` 2 to 100 nodes, 400
 links, values 1e-9 to 1e15. `lanes` segments span at least 1e-6 in total;
 `structure` `start` stays within ±1e9. Log axes take values from 1e-100 to
-1e100; a numeric `x` takes up to 1000 values within ±1e15 spanning at least 1e-9.
+1e100; a numeric `x` takes up to 1000 values within ±1e15 spanning at least 1e-300.
+`graph` 16 groups, ranks 0 to 149. `tokens` 64 tokens, 128 arcs, 6 tag rows, 64
+spans, 512 alignment links, weights 0 to 1, 8 BIO entity types; tokens and arc
+and span labels up to 40 characters, tag names and tags 24. `nn` 2 to 12
+layers of up to 1e6 neurons (over 12 collapse round an ellipsis), 64 dropout
+pairs, input and output labels 24 characters, names 40. `tensors` 12 stages,
+dims 1 to 1e6, ops and labels 24 characters. `trellis` 2 to 8 states, 16
+observations, labels 16 characters. `chart heatmap` 40 rows and cols; `chart
+lines` points and `chart scatter` series up to 1000 points each (2000 in a
+scatter), 8 refs, 32 marks; a linear axis spans or reaches at least 1e-300.
 
 ### flow and sequence
 
@@ -233,7 +256,8 @@ root's `up` is the tree's output.
 `tree` is `"Root(A,B(C,D))"` (labels hold anything but `( ) ,`) or a node.
 `dir` `down` `up` `right` `left`. `layout` `tidy`, `spine` (a parent sits on
 its first child: Schwartz trees) or `leaves` (every leaf on the bottom row:
-parse trees). `shape` `box` `round` `circle` `ellipse` `dot` `cells`. `arrows`
+parse trees). `shape` `box` `round` `circle` `ellipse` `dot` `cells` `text`
+(a bare label, no outline; its tone colours the words). `arrows`
 `none` `toParent` `toChild`. `levels` captions each depth. `until: k` shows
 steps up to k without moving anything, for snapshots. `mono`. Node keys:
 `label` `children` `shape` `tone` `mono` `below` `belowTone` `edge` (label on
@@ -258,8 +282,24 @@ curves. `step` badges an edge near its source.
 
 `dir` `down` `right`. Node: `id` `label` `shape` (`box` `round` `circle`
 `double` `dot` `diamond`) `tone` `start` (entry arrow) `side` (annotation)
-`mono`. Edge: `from` `to` `label` `tone` `dashed` `step` `back` (mark the
-backward one when every node has edges both ways, as with gradients).
+`mono` `fill` (a tone wash inside) `below` (a mono caption under the node, such
+as `q = 6`) `rank` (pins the node to a layer; equal ranks share a row and the
+edges between them run straight across). Edge: `from` `to` `label` `tone`
+`dashed` `step` `back` (mark the backward one when every node has edges both
+ways, as with gradients). Body: `mono` (every label in the code face) and
+`groups` [{`label` `nodes` `tone`}], a dashed outline round repeated blocks. A
+long edge that would cross the nodes it skips detours round the side: residual
+and skip connections.
+
+````markdown
+```graph
+{"title":"Transformer encoder block",
+ "nodes":[{"id":"in","label":"input + pos","shape":"round"},{"id":"mha","label":"multi-head attention","fill":"c1"},
+  {"id":"add","label":"add & norm"},{"id":"out","label":"output","shape":"round"}],
+ "edges":[{"from":"in","to":"mha"},{"from":"mha","to":"add"},{"from":"in","to":"add","label":"residual"},{"from":"add","to":"out"}],
+ "groups":[{"label":"x 6","nodes":["mha","add"]}]}
+```
+````
 
 ### lanes
 
@@ -346,6 +386,57 @@ swaps show red, values print after each step (`values: false` hides them).
 `tree`, `size` (count, side, dimension or depth), `labels` `index` `binary`
 `coords`, `path` (a route, checked hop by hop). `sankey` `nodes` [{`id`
 `label` `tone`}], `links` [{`from` `to` `value`}], `format`; cycles are rejected.
+
+### tokens
+
+A row of token boxes with NLP structure around it. `arcs` go above the row:
+dependency arcs point head to dependent with the label on the arch, nested by
+span. `root` drops an arrow into one token. With `weights: true` arcs become
+attention links whose width and opacity follow `weight`. `spans` bracket
+ranges under the row (subword pieces of one word). `tags` adds named rows under
+the row; a BIO row (B-X, I-X, O) becomes one coloured bar per entity. For
+alignment, give `rows` (exactly two) and `links` instead of `tokens`. Long rows
+scroll sideways at full size.
+
+````markdown
+```tokens
+{"tokens":["The","cat","sat"],"root":2,
+ "arcs":[{"from":2,"to":1,"label":"nsubj"},{"from":1,"to":0,"label":"det"}],
+ "tags":{"POS":["DET","NOUN","VERB"]}}
+```
+````
+
+`tokens`, `arcs` [{`from` `to` `label` `tone` `weight`}], `root`, `weights`,
+`tags` {name: [one per token]}, `spans` [{`from` `to` (inclusive) `label`
+`tone`}], `rows` [{`name` `tokens`}] with `links` [[i, j, weight]].
+
+### nn, tensors, trellis
+
+````markdown
+```nn
+{"layers":[3,4,4,2],"inputs":["x1","x2","x3"],"outputs":["y1","y2"],"names":["input","hidden 1","hidden 2","output"]}
+```
+
+```tensors
+{"stages":[{"dims":[224,224,3],"label":"image"},{"op":"conv 7x7 /2","dims":[112,112,64]},{"op":"avgpool","dims":[512]}]}
+```
+
+```trellis
+{"states":["Hot","Cold"],"obs":["3","1","3"],"start":"π","scores":[[0.32,0.0384,0.0184],[0.02,0.064,0.0019]],"path":[0,1,0]}
+```
+````
+
+`nn` draws a fully connected network from `layers`; a layer over 12 neurons
+shows its first and last 5 round an ellipsis and every column prints its true
+size. `inputs` and `outputs` label the first and last layer, `names` caption
+each column, `tones` colour each layer, `weights: true` shades edges with
+seeded illustrative weights (blue positive, orange negative), `dropout`
+[[layer, neuron]] draws neurons hollow. `tensors` draws `stages` left to right:
+`dims` [h, w, c] is a box with channels as depth, [h, w] a face, [n] a bar,
+sized on a log scale; `op` labels the arrow into a stage, `label` sits under
+it. `trellis` puts `states` down the side and `obs` across the top; `scores`
+(states x obs) print in the nodes, `path` (one state index per column) draws
+the best path, `transitions: "path"` drops the faint all-pairs edges.
 
 ## 7 · Need a formula
 

@@ -6,4 +6,5 @@
  */
 export const DIAGRAM_FENCES = /** @type {const} */ ([
   "tree", "graph", "structure", "lanes", "pipeline", "layers", "er", "sortnet", "topology", "sankey",
+  "tokens", "nn", "tensors", "trellis",
 ]);

@@ -24,6 +24,10 @@ import * as er from "./er.js";
 import * as sortnet from "./sortnet.js";
 import * as topology from "./topology.js";
 import * as sankey from "./sankey.js";
+import * as tokens from "./tokens.js";
+import * as nn from "./nn.js";
+import * as tensors from "./tensors.js";
+import * as trellis from "./trellis.js";
 
 /**
  * @typedef {{
@@ -35,7 +39,7 @@ import * as sankey from "./sankey.js";
 
 /** Fence name -> module. Insertion order is the order the docs list them in. */
 export const DIAGRAMS = /** @type {Record<string, DiagramModule>} */ ({
-  tree, graph, structure, lanes, pipeline, layers, er, sortnet, topology, sankey,
+  tree, graph, structure, lanes, pipeline, layers, er, sortnet, topology, sankey, tokens, nn, tensors, trellis,
 });
 
 export { DIAGRAM_FENCES } from "./names.js";
@@ -65,12 +69,19 @@ export function withDiagramCache(fn) {
   }
 }
 
-/** @param {{ type: string, data: unknown }} block */
-export function renderDiagram(block) {
+/**
+ * Draw a figure block once per `withDiagramCache` call: diagrams, and charts,
+ * which share the per-figure budget.
+ * @param {object} block @param {() => string} draw
+ */
+export function drawOnce(block, draw) {
   let html = drawn?.get(block);
   if (html === undefined) {
-    html = DIAGRAMS[block.type].render(block);
+    html = draw();
     drawn?.set(block, html);
   }
   return html;
 }
+
+/** @param {{ type: string, data: unknown }} block */
+export const renderDiagram = (block) => drawOnce(block, () => DIAGRAMS[block.type].render(block));
