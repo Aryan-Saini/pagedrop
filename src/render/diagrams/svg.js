@@ -148,9 +148,15 @@ export function figure(svg, title = "", note = "") {
  * @param {{ x0: number, y0: number, x1: number, y1: number }[]} rects
  */
 export function bounds(rects, pad = 12) {
-  const x0 = Math.min(...rects.map((r) => r.x0)) - pad, y0 = Math.min(...rects.map((r) => r.y0)) - pad;
-  const x1 = Math.max(...rects.map((r) => r.x1)) + pad, y1 = Math.max(...rects.map((r) => r.y1)) + pad;
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  // A loop, not Math.min(...rects): a spread hits the engine's argument limit on big diagrams.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const r of rects) {
+    if (r.x0 < x0) x0 = r.x0;
+    if (r.y0 < y0) y0 = r.y0;
+    if (r.x1 > x1) x1 = r.x1;
+    if (r.y1 > y1) y1 = r.y1;
+  }
+  return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
 }
 
 /** Rough text width for layout. SVG cannot measure before render, so this is calibrated to the shell's fonts. */

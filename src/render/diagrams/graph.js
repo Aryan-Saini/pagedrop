@@ -36,6 +36,9 @@ const DIRS = /** @type {const} */ (["down", "right"]);
 
 /* ------------------------------------------------------------------ schema */
 
+/** Layout cost grows with crossings between layers; past these a graph is unreadable anyway. */
+export const MAX_NODES = 150, MAX_EDGES = 300;
+
 /**
  * `{ nodes: [{ id, label?, shape?, tone?, start?, side?, mono? }], edges?: [{ from, to, ... }] }`.
  * Node ids are unique and every edge end must name one.
@@ -53,12 +56,16 @@ export function validate(errors, block, file) {
 
   /** @type {Set<string>} */
   const ids = new Set();
-  if (wantNonEmptyArray(ctx, body.nodes, "/nodes", "at least one node")) {
+  if (Array.isArray(body.nodes) && body.nodes.length > MAX_NODES) {
+    ctx.at("/nodes", `expected at most ${MAX_NODES} nodes, got ${body.nodes.length}; split the graph`);
+  } else if (wantNonEmptyArray(ctx, body.nodes, "/nodes", "at least one node")) {
     /** @type {unknown[]} */ (body.nodes).forEach((node, i) => {
       const np = ptr("", "nodes", i);
       if (!wantObject(ctx, node, np, "a node { id }")) return;
       if (wantText(ctx, node.id, ptr(np, "id"), "a node id")) {
         const id = /** @type {string} */ (node.id);
+        // Control characters are reserved: the layout keys its own dummy points and edge pairs with them.
+        if (/[\u0000-\u001f]/.test(id)) ctx.at(ptr(np, "id"), `expected an id without control characters, got ${show(id)}`);
         if (ids.has(id)) ctx.at(ptr(np, "id"), `duplicate node id ${JSON.stringify(id)}; ids must be unique`);
         ids.add(id);
       }
@@ -72,7 +79,9 @@ export function validate(errors, block, file) {
     });
   }
 
-  if (body.edges !== undefined && wantArray(ctx, body.edges, "/edges", "an array of edges")) {
+  if (Array.isArray(body.edges) && body.edges.length > MAX_EDGES) {
+    ctx.at("/edges", `expected at most ${MAX_EDGES} edges, got ${body.edges.length}; split the graph`);
+  } else if (body.edges !== undefined && wantArray(ctx, body.edges, "/edges", "an array of edges")) {
     /** @type {unknown[]} */ (body.edges).forEach((edge, i) => {
       const ep = ptr("", "edges", i);
       if (!wantObject(ctx, edge, ep, "an edge { from, to }")) return;

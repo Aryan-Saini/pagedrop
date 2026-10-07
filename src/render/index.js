@@ -70,7 +70,9 @@ export function render(input, opts = {}) {
   const resolved = resolveSources(parsed.doc, { file, baseDir });
   errors.push(...resolved.errors);
   errors.push(...validateDoc(resolved.doc, { file }));
-  const doc = normalize(resolved.doc);
+  // Normalizers fill defaults on shapes validation has vouched for, so a document
+  // with errors is returned as resolved, never normalized.
+  const doc = errors.length ? resolved.doc : normalize(resolved.doc);
 
   const ir = parsed.doc;
   if (errors.length) return { html: null, errors, doc, ir };

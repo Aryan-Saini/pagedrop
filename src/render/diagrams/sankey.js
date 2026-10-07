@@ -27,6 +27,9 @@ import { DIAGRAM_TONES, esc, inkOf, n, svgOpen, figure, textW } from "./svg.js";
 const KEYS = ["title", "note", "compact", "format", "nodes", "links"];
 
 /** Validate a `sankey` fence body. */
+/** Size caps, and the value range that keeps d3's column sums finite and its scale sane. */
+const MAX_NODES = 100, MAX_LINKS = 400, MIN_VALUE = 1e-9, MAX_VALUE = 1e15;
+
 export function validate(errors, block, file) {
   const ctx = new Ctx(errors, file, block.line, "sankey");
   if (!wantObject(ctx, block.data, "", "an object { nodes, links }")) return;
@@ -39,7 +42,9 @@ export function validate(errors, block, file) {
   unknownKeys(ctx, body, "", KEYS);
 
   /** @type {Set<string>} */ const ids = new Set();
-  if (wantNonEmptyArray(ctx, body.nodes, "/nodes", "at least two nodes")) {
+  if (Array.isArray(body.nodes) && (body.nodes.length === 1 || body.nodes.length > MAX_NODES)) {
+    ctx.at("/nodes", `expected 2 to ${MAX_NODES} nodes, got ${body.nodes.length}`);
+  } else if (wantNonEmptyArray(ctx, body.nodes, "/nodes", "at least two nodes")) {
     /** @type {unknown[]} */ (body.nodes).forEach((node, i) => {
       const np = ptr("", "nodes", i);
       if (!wantObject(ctx, node, np, "a node { id, label }")) return;
@@ -54,6 +59,10 @@ export function validate(errors, block, file) {
     });
   }
 
+  if (Array.isArray(body.links) && body.links.length > MAX_LINKS) {
+    ctx.at("/links", `expected at most ${MAX_LINKS} links, got ${body.links.length}`);
+    return;
+  }
   if (!wantNonEmptyArray(ctx, body.links, "/links", "at least one link")) return;
   /** @type {Map<string, { to: string, at: number }[]>} */ const out = new Map();
   /** @type {Set<string>} */ const linked = new Set();
@@ -68,8 +77,12 @@ export function validate(errors, block, file) {
         ok = ctx.at(ptr(lp, end), `no node with id ${show(link[end])}; ids: ${[...ids].join(" ")}`);
       }
     }
-    if (wantNumber(ctx, link.value, ptr(lp, "value")) && /** @type {number} */ (link.value) <= 0) {
-      ctx.at(ptr(lp, "value"), `expected a value > 0, got ${show(link.value)}`);
+    if (wantNumber(ctx, link.value, ptr(lp, "value"))) {
+      const v = /** @type {number} */ (link.value);
+      if (v <= 0) ctx.at(ptr(lp, "value"), `expected a value > 0, got ${show(v)}`);
+      else if (v < MIN_VALUE || v > MAX_VALUE) {
+        ctx.at(ptr(lp, "value"), `expected a value from ${MIN_VALUE} to ${MAX_VALUE}, got ${show(v)}; rescale the units`);
+      }
     }
     unknownKeys(ctx, link, lp, ["from", "to", "value"]);
     if (!ok) { refsOk = false; return; }
@@ -88,6 +101,7 @@ export function validate(errors, block, file) {
     ctx.at(ptr("", "links", cycle.at), `closes a cycle ${cycle.ids.join(" -> ")}; a sankey flows one way, so cut one of these links`);
   }
   /** @type {unknown[]} */ (body.nodes).forEach((node, i) => {
+    if (!node || typeof node !== "object") return; // already reported
     const id = /** @type {{ id: string }} */ (node).id;
     if (ids.has(id) && !linked.has(id)) ctx.at(ptr("", "nodes", i), `node ${JSON.stringify(id)} has no links; drop it or link it`);
   });

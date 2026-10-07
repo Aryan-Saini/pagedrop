@@ -100,6 +100,8 @@ function positiveOnLog(ctx, values, scale, axis, pointerOf) {
   let ok = true;
   values.forEach((v, i) => {
     if (!(v > 0)) ok = ctx.at(pointerOf(i), `expected a value > 0 on the ${scale} ${axis} axis, got ${show(v)}`);
+    // Ticks round out to the next power of the base, which must stay a finite, non-zero double.
+    else if (v < 1e-100 || v > 1e100) ok = ctx.at(pointerOf(i), `expected a value from 1e-100 to 1e100 on the ${scale} ${axis} axis, got ${show(v)}`);
   });
   return ok;
 }
@@ -184,6 +186,9 @@ const KINDS = {
     linesBody(ctx, body);
     optionalBoolean(ctx, body.area, "/area");
     optionalBoolean(ctx, body.zeroFloor, "/zeroFloor");
+    if (body.zeroFloor === true && (body.yScale === "log2" || body.yScale === "log10")) {
+      ctx.at("/zeroFloor", `has no effect on a ${body.yScale} y axis, which cannot reach 0; drop it`);
+    }
     return ["labels", "x", "series", "area", "zeroFloor", "xScale", "yScale"];
   },
 

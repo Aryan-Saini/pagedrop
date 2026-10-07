@@ -41,6 +41,9 @@ const STATE_INK = {
 const TOP_KEYS = ["title", "note", "compact", "axis", "lanes", "msgs"];
 
 /** Validate a `lanes` fence body. */
+/** Times stay in a range where scaling to pixels is exact; names stay short enough to leave room for the bars. */
+const MAX_TIME = 1e9, MIN_EXTENT = 1e-6, MAX_NAME = 24;
+
 export function validate(errors, block, file) {
   const ctx = new Ctx(errors, file, block.line, "lanes");
   if (!wantObject(ctx, block.data, "", "an object { lanes, msgs }")) return;
@@ -62,6 +65,7 @@ export function validate(errors, block, file) {
       if (wantText(ctx, lane.name, ptr(lp, "name"), "a lane name")) {
         if (names.has(lane.name)) ctx.at(ptr(lp, "name"), `duplicate lane name ${show(lane.name)}; a message addresses a lane by name`);
         names.add(lane.name);
+        if (lane.name.length > MAX_NAME) ctx.at(ptr(lp, "name"), `expected a name of at most ${MAX_NAME} characters, got ${lane.name.length}`);
       }
       if (!wantNonEmptyArray(ctx, lane.segs, ptr(lp, "segs"), "at least one segment")) return;
       /** @type {{ from: number, to: number, k: number }[]} */
@@ -75,6 +79,10 @@ export function validate(errors, block, file) {
         const okFrom = wantNumber(ctx, seg.from, ptr(sp, "from"));
         const okTo = wantNumber(ctx, seg.to, ptr(sp, "to"));
         if (!okFrom || !okTo) return;
+        if (Math.abs(seg.from) > MAX_TIME || Math.abs(seg.to) > MAX_TIME) {
+          ctx.at(sp, `expected times within ±${MAX_TIME}, got from ${seg.from} and to ${seg.to}; rescale the units`);
+          return;
+        }
         if (seg.from >= seg.to) {
           ctx.at(sp, `expected from < to, got from ${seg.from} and to ${seg.to}`);
           return;
@@ -91,6 +99,10 @@ export function validate(errors, block, file) {
         }
       }
     });
+  }
+
+  if (t0 < t1 && t1 - t0 < MIN_EXTENT) {
+    ctx.at("/lanes", `expected the segments to span at least ${MIN_EXTENT}, got ${t1 - t0}; rescale the units`);
   }
 
   if (body.msgs === undefined || !wantArray(ctx, body.msgs, "/msgs", "an array of messages")) return;
@@ -261,8 +273,9 @@ export function render(block) {
   let bottom = yOf(d.lanes.length - 1) + BAR_H / 2;
   if (d.axis) {
     const y = bottom + 10;
-    // Integer ticks, thinned so neighbours stay at least 26px apart.
-    const step = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find((s) => s * unit >= 26) ?? 1000;
+    // Integer ticks on a 1-2-5 ladder, thinned so neighbours stay at least 26px apart.
+    let step = 1;
+    for (let k = 0; step * unit < 26; k++) step = [1, 2, 5][k % 3] * 10 ** Math.floor(k / 3);
     body += `<line x1="${n(xOf(t0))}" y1="${n(y)}" x2="${n(xOf(t1))}" y2="${n(y)}" stroke="${INK.rule}"/>`;
     for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
       body += `<line x1="${n(xOf(t))}" y1="${n(y)}" x2="${n(xOf(t))}" y2="${n(y + 4)}" stroke="${INK.rule}"/>`;

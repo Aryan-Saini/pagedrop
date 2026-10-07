@@ -36,6 +36,10 @@ export function validate(errors, block, file) {
   optionalBoolean(ctx, body.compact, "/compact");
   optionalEnum(ctx, body.shape, "/shape", SHAPES);
   unknownKeys(ctx, body, "", ["title", "note", "compact", "shape", "items"]);
+  if (Array.isArray(body.items) && body.items.length > 32) {
+    ctx.at("/items", `expected at most 32 layers, got ${body.items.length}`);
+    return;
+  }
   if (!wantNonEmptyArray(ctx, body.items, "/items", "at least one layer")) return;
   body.items.forEach((it, i) => {
     const ip = ptr("", "items", i);

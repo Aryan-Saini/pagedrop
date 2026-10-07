@@ -12,7 +12,7 @@
  */
 
 import {
-  Ctx, ptr, show, wantObject, wantNonEmptyArray, wantText, isObject,
+  Ctx, ptr, show, wantObject, wantArray, wantNonEmptyArray, wantText, isObject,
   optionalString, optionalBoolean, optionalEnum, unknownKeys,
 } from "../schema/common.js";
 import { DIAGRAM_TONES, INK, inkOf, markers, text, svgOpen, figure, bounds, textW, n } from "./svg.js";
@@ -57,6 +57,9 @@ function wantIndex(/** @type {Ctx} */ ctx, /** @type {unknown} */ v, /** @type {
  * `{ kind: "list" | "array" | "stack", cells, ... }`. Each kind has its own key
  * set; indices (`cycle`, a pointer's `at`) must land on a real cell.
  */
+/** A structure is one row (or column) of cells; past this it no longer fits a page. */
+const MAX_CELLS = 64;
+
 export function validate(errors, block, file) {
   const ctx = new Ctx(errors, file, block.line, "structure");
   if (!wantObject(ctx, block.data, "", "an object { kind, cells }")) return;
@@ -72,6 +75,10 @@ export function validate(errors, block, file) {
   }
   unknownKeys(ctx, body, "", KEYS[kind]);
 
+  if (Array.isArray(body.cells) && body.cells.length > MAX_CELLS) {
+    ctx.at("/cells", `expected at most ${MAX_CELLS} cells, got ${body.cells.length}`);
+    return;
+  }
   const cells = wantNonEmptyArray(ctx, body.cells, "/cells", "at least one cell") ? /** @type {unknown[]} */ (body.cells) : null;
   cells?.forEach((cell, i) => {
     const cp = ptr("", "cells", i);
@@ -90,11 +97,11 @@ export function validate(errors, block, file) {
   if (kind === "list") {
     if (body.head !== undefined) wantText(ctx, body.head, "/head", "a pointer name");
     optionalBoolean(ctx, body.doubly, "/doubly");
-    if (body.cycle !== undefined) wantIndex(ctx, body.cycle, "/cycle", 0, last);
+    if (body.cycle !== undefined && body.cycle !== null) wantIndex(ctx, body.cycle, "/cycle", 0, last);
   } else if (kind === "array") {
     const start = body.start ?? 0;
     if (!Number.isInteger(start)) ctx.at("/start", `expected an integer, got ${show(body.start)}`);
-    if (body.pointers !== undefined && wantNonEmptyArray(ctx, body.pointers, "/pointers", "an array of pointers")) {
+    if (body.pointers !== undefined && wantArray(ctx, body.pointers, "/pointers", "an array of pointers")) {
       /** @type {unknown[]} */ (body.pointers).forEach((p, i) => {
         const pp = ptr("", "pointers", i);
         if (!wantObject(ctx, p, pp, "a pointer { name, at }")) return;

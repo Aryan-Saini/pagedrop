@@ -241,7 +241,7 @@ export function validate(errors, block, file) {
       if (typeof s !== "string") ctx.at(ptr("/levels", i), `expected a string, got ${show(s)}`);
     });
     if (depth !== null && levels.length > depth + 1) {
-      ctx.at("/levels", `expected at most ${depth + 1} levels (one per depth, the tree is ${depth} deep), got ${levels.length}`);
+      ctx.at("/levels", `expected at most ${depth + 1} ${depth === 0 ? "level" : "levels"} (one per depth, the tree is ${depth} deep), got ${levels.length}`);
     }
   }
 }

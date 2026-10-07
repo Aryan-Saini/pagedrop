@@ -32,6 +32,9 @@ export const KEYS = /** @type {const} */ (["pk", "fk"]);
 const CARD = /^[^:\s]+:[^:\s]+$/;
 
 /** Validate an `er` fence body. */
+/** Past this many tables an ER diagram stops being readable on a page. */
+const MAX_ENTITIES = 24;
+
 export function validate(errors, block, file) {
   const ctx = new Ctx(errors, file, block.line, "er");
   if (!wantObject(ctx, block.data, "", "an object { entities, links }")) return;
@@ -44,7 +47,9 @@ export function validate(errors, block, file) {
   /** table name -> its field names */
   /** @type {Map<string, string[]>} */
   const tables = new Map();
-  if (wantNonEmptyArray(ctx, body.entities, "/entities", "at least one entity")) {
+  if (Array.isArray(body.entities) && body.entities.length > MAX_ENTITIES) {
+    ctx.at("/entities", `expected at most ${MAX_ENTITIES} tables, got ${body.entities.length}`);
+  } else if (wantNonEmptyArray(ctx, body.entities, "/entities", "at least one entity")) {
     body.entities.forEach((e, i) => {
       const ep = ptr("", "entities", i);
       if (!wantObject(ctx, e, ep, "an entity { name, fields }")) return;
@@ -53,6 +58,8 @@ export function validate(errors, block, file) {
       const names = [];
       if (wantText(ctx, e.name, ptr(ep, "name"), "a table name")) {
         if (tables.has(e.name)) ctx.at(ptr(ep, "name"), `duplicate table ${show(e.name)}; a link addresses a table by name`);
+        // A link names "table.field", so a dot in a table name could never be linked.
+        if (e.name.includes(".")) ctx.at(ptr(ep, "name"), `expected a table name without ".", got ${show(e.name)}; links address "table.field"`);
         else tables.set(e.name, names);
       }
       if (!wantNonEmptyArray(ctx, e.fields, ptr(ep, "fields"), "at least one field")) return;
