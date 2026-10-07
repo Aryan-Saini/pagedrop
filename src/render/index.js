@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 
 import { validateHtml } from "../html-policy.js";
 import { renderBody } from "./blocks.js";
+import { DIAGRAM_FENCES } from "./diagrams/names.js";
+import { DIAGRAMS, FIGURE_BUDGET, renderDiagram, withDiagramCache } from "./diagrams/index.js";
 import { normalize, validateDoc } from "./schema/index.js";
 import { escapeHtml, parseInfo, parseIr, parseMarkdown, slugify, splitFrontmatter } from "./parse.js";
 import { page } from "./shell.js";
@@ -69,12 +71,28 @@ export function render(input, opts = {}) {
   const resolved = resolveSources(parsed.doc, { file, baseDir });
   errors.push(...resolved.errors);
   errors.push(...validateDoc(resolved.doc, { file }));
-  const doc = normalize(resolved.doc);
+  // Normalizers fill defaults on shapes validation has vouched for, so a document
+  // with errors is returned as resolved, never normalized.
+  const doc = errors.length ? resolved.doc : normalize(resolved.doc);
 
   const ir = parsed.doc;
   if (errors.length) return { html: null, errors, doc, ir };
 
-  const html = page({ title: doc.meta.tab ?? doc.meta.title, body: renderBody(doc), generator: GENERATOR, icon: doc.meta.icon });
+  // Each diagram is checked against its own budget first, so an oversized one is
+  // reported at its fence; the cache means the page body reuses that markup.
+  const html = withDiagramCache(() => {
+    for (const block of doc.blocks) {
+      if (!Object.hasOwn(DIAGRAMS, block.type)) continue;
+      const bytes = new TextEncoder().encode(renderDiagram(block)).length;
+      if (bytes > FIGURE_BUDGET) {
+        errors.push({ file, line: block.line, block: block.type,
+          message: `renders to ${Math.round(bytes / 1024)} KB; one diagram may take ${FIGURE_BUDGET / 1024} KB of the 512 KB page, so split it or drop labels` });
+      }
+    }
+    if (errors.length) return null;
+    return page({ title: doc.meta.tab ?? doc.meta.title, body: renderBody(doc), generator: GENERATOR, icon: doc.meta.icon });
+  });
+  if (html === null) return { html: null, errors, doc, ir };
 
   const policy = validateHtml(html, {});
   for (const message of policy.errors) {
@@ -86,7 +104,7 @@ export function render(input, opts = {}) {
 }
 
 /** Fences whose `data.src` names a JSON file on disk rather than a media URL. */
-const SRC_FENCES = new Set(["chart", "stats", "hero", "flow", "sequence", "timeline"]);
+const SRC_FENCES = new Set(["chart", "stats", "hero", "flow", "sequence", "timeline", ...DIAGRAM_FENCES]);
 
 /**
  * Replace `{"src": "data/rows.json"}` in a data fence with the file's contents,

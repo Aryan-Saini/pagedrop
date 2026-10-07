@@ -18,6 +18,7 @@ import { escapeHtml } from "./parse.js";
 import { meter, renderChart, sparkline } from "./charts.js";
 import { COPY_SCRIPT, codeSprite, iconKey, pathButton, renderCode, renderDiff } from "./code.js";
 import { renderFlow, renderSequence } from "./diagram.js";
+import { DIAGRAMS, renderDiagram } from "./diagrams/index.js";
 import { renderInlineMath, renderMathBlock, unescapeHtml } from "./math.js";
 import { MEDIA_SCRIPT, withFailPanels } from "./media.js";
 import { FILES_SCRIPT, renderFiles } from "./files.js";
@@ -73,7 +74,18 @@ export function renderBody(doc) {
   const toc = contents(blocks);
   if (toc) parts.push(toc);
 
-  for (; i < blocks.length; i++) parts.push(renderBlock(blocks[i], ctx));
+  for (; i < blocks.length; i++) {
+    // Consecutive compact diagrams share one wrapping row, so snapshots and
+    // small topologies read side by side.
+    if (!isCompactDiagram(blocks[i]) || !isCompactDiagram(blocks[i + 1])) {
+      parts.push(renderBlock(blocks[i], ctx));
+      continue;
+    }
+    const row = [];
+    while (isCompactDiagram(blocks[i])) row.push(renderBlock(blocks[i++], ctx));
+    i--;
+    parts.push(`<div class="fig-row">\n${row.join("\n")}\n</div>`);
+  }
   parts.push(...ctx.lightboxes);
 
   const wrap = `<div class="wrap"><main>\n${parts.filter(Boolean).join("\n")}\n</main></div>`;
@@ -179,8 +191,13 @@ export function renderBlock(block, ctx = newCtx()) {
     // .fence scopes the mock colour utilities to fence output; it is display:contents.
     case "html": return `<div class="fence">${withFailPanels(block.html, ctx)}</div>`;
     case "footnotes": return footnotes(block);
-    default: return "";
+    default: return Object.hasOwn(DIAGRAMS, block.type) ? renderDiagram(block) : "";
   }
+}
+
+/** A diagram fence that asked for `compact`. */
+function isCompactDiagram(block) {
+  return !!block && Object.hasOwn(DIAGRAMS, block.type) && block.data?.compact === true;
 }
 
 /* ------------------------------------------------------------------ prose */

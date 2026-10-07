@@ -111,6 +111,9 @@ The other thirteen kinds take that fence and envelope with this body:
 {"rows":["Mon","Tue"],"cols":["00","12"],"values":[[1,14],[0,16]]}
 // scatter:   points with an optional bubble size
 {"xTitle":"Minutes","yTitle":"KB","points":[{"x":24,"y":102,"size":9,"label":"Plans"}]}
+// log axes:  lines and scatter take xScale / yScale linear|log2|log10; lines takes numeric x,
+//            which a log x needs; a dashed series is a reference line
+{"xScale":"log2","yScale":"log2","x":[1,4,16,64],"series":[{"name":"Ideal","values":[1,4,16,64],"dashed":true}]}
 // schedule:  ISO dates, ticks fall on month boundaries
 {"tasks":[{"label":"Convex backend","start":"2026-08-14","end":"2026-08-29","done":true}]}
 ```
@@ -154,7 +157,41 @@ export async function upload(html: string) {
 
 ## 6 · Need a diagram
 
-Two layouts, drawn to computed geometry. Mermaid does not render here.
+Every diagram is a JSON fence laid out by the renderer: never give coordinates.
+Mermaid does not render here. Pick the fence by what you are drawing:
+
+| Drawing | Fence |
+| --- | --- |
+| Request path, pipeline of steps, decision flow | `flow` |
+| Calls between services in order | `sequence` |
+| Any rooted tree: processes, recursion, reduce/scan, decision, parse | `tree` |
+| DAG, critical path, dependencies, state machine, automaton, computation graph | `graph` |
+| Process timelines with messages between them | `lanes` |
+| Linked list, array with index pointers, stack | `structure` |
+| Rows by time steps: CPU pipeline, per-step schedule | `pipeline` |
+| Memory hierarchy, protocol stack | `layers` |
+| Tables and references | `er` |
+| Sorting network | `sortnet` |
+| Ring, mesh, torus, hypercube, star, complete, tree interconnect | `topology` |
+| Flow volumes between stages | `sankey` |
+
+Every fence below takes `title`, `note` and `compact`. Tones are `good warn bad
+flat span c1`…`c8` (`span` is the critical-path amber). Consecutive fences with
+`"compact": true` share a row, for snapshots and small multiples. Unknown keys
+fail the render.
+
+**Limits**, each reported at the fence when crossed: one diagram may render to
+320 KB. `tree` 400 nodes, 32 deep, 32 cells a node. `graph` 150 nodes, 300
+edges, no control characters in ids. `lanes` 24 lanes, 200 segments a lane, 100
+messages, names up to 40 characters, times within ±1e9. `structure` 64 cells,
+64 pointers. `pipeline` 64 rows, 128 steps, 2048 filled cells. `layers` 32.
+`er` 24 tables (no dots in names), 40 fields each, 100 links. `sortnet` 32
+wires, 64 layers. `topology` paths of 128 hops. `sankey` 2 to 100 nodes, 400
+links, values 1e-9 to 1e15. `lanes` segments span at least 1e-6 in total;
+`structure` `start` stays within ±1e9. Log axes take values from 1e-100 to
+1e100; a numeric `x` takes up to 1000 values within ±1e15 spanning at least 1e-9.
+
+### flow and sequence
 
 ````markdown
 ```flow
@@ -173,9 +210,142 @@ Two layouts, drawn to computed geometry. Mermaid does not render here.
 ```
 ````
 
-Shapes are `box` `round` `diamond` `store`. Node ids are unique across all
+Flow shapes are `box` `round` `diamond` `store`. Node ids are unique across all
 columns and every edge endpoint must name one; sequence endpoints must name a
 declared actor.
+
+### tree
+
+Shorthand or nested nodes; no ids. Values can flow along edges: `up` goes to
+the parent in red, `down` comes from it in blue, and `{"v":5,"step":2}` puts a
+numbered badge at the sending end, so the picture says who sent first. The
+root's `up` is the tree's output.
+
+````markdown
+```tree
+{"title":"Scan","shape":"circle","tree":{"children":[
+  {"up":{"v":5,"step":2},"down":{"v":0,"step":3},"children":[
+    {"shape":"cells","cells":[2,1],"up":{"v":3,"step":1},"down":{"v":0,"step":4},"below":"0 2"},
+    {"shape":"cells","cells":[3,-1],"up":{"v":2,"step":1},"down":{"v":3,"step":4},"below":"3 6"}]}]}}
+```
+````
+
+`tree` is `"Root(A,B(C,D))"` (labels hold anything but `( ) ,`) or a node.
+`dir` `down` `up` `right` `left`. `layout` `tidy`, `spine` (a parent sits on
+its first child: Schwartz trees) or `leaves` (every leaf on the bottom row:
+parse trees). `shape` `box` `round` `circle` `ellipse` `dot` `cells`. `arrows`
+`none` `toParent` `toChild`. `levels` captions each depth. `until: k` shows
+steps up to k without moving anything, for snapshots. `mono`. Node keys:
+`label` `children` `shape` `tone` `mono` `below` `belowTone` `edge` (label on
+the edge from the parent) `cells` (with shape `cells`) `up` `down`. At most 400
+nodes, 32 deep.
+
+### graph
+
+Nodes and edges only; the renderer layers them. Cycles are found and drawn as
+dashed loops round the outside, a self-edge is a small loop, parallel edges
+merge into one arrow labelled `a, b`, and a pair `a->b` `b->a` becomes two bowed
+curves. `step` badges an edge near its source.
+
+````markdown
+```graph
+{"title":"Ends in ab","dir":"right",
+ "nodes":[{"id":"q0","shape":"circle","start":true},{"id":"q1","shape":"circle"},{"id":"q2","shape":"double","tone":"good"}],
+ "edges":[{"from":"q0","to":"q0","label":"b"},{"from":"q0","to":"q1","label":"a"},{"from":"q1","to":"q1","label":"a"},
+          {"from":"q1","to":"q2","label":"b"},{"from":"q2","to":"q1","label":"a"},{"from":"q2","to":"q0","label":"b"}]}
+```
+````
+
+`dir` `down` `right`. Node: `id` `label` `shape` (`box` `round` `circle`
+`double` `dot` `diamond`) `tone` `start` (entry arrow) `side` (annotation)
+`mono`. Edge: `from` `to` `label` `tone` `dashed` `step` `back` (mark the
+backward one when every node has edges both ways, as with gradients).
+
+### lanes
+
+One row per process, state segments over time, dashed arrows for messages.
+States colour themselves: `busy` blue, `send` green, `recv` violet, `blocked`
+red, `idle` grey. A segment label that does not fit is dropped.
+
+````markdown
+```lanes
+{"title":"Message passing is asynchronous","axis":"time (ms)",
+ "lanes":[{"name":"Pid1","segs":[{"from":0,"to":2,"label":"Pid2 ! Msg","state":"send"},{"from":2,"to":6,"label":"busy"}]},
+          {"name":"Pid2","segs":[{"from":0,"to":4,"label":"busy"},{"from":4,"to":6,"label":"receive","state":"recv"}]}],
+ "msgs":[{"from":{"lane":"Pid1","t":1.5},"to":{"lane":"Pid2","t":4.2},"label":"Msg"}]}
+```
+````
+
+`lanes` [{`name`, `segs` [{`from` `to` `label` `state`}]}], `msgs` [{`from`
+{`lane` `t`}, `to` {`lane` `t`}, `label`, `step`}], `axis` (draws time ticks).
+
+### structure
+
+`list` chains `[value | next]` cells: `head` names the entry pointer, `doubly`
+adds prev arrows, `cycle` bends the last next back to an index. `array` prints
+indices from `start` and draws named pointers under cells. `stack` is a column,
+top first.
+
+````markdown
+```structure
+{"kind":"array","cells":[2,5,8,12,16],"pointers":[{"name":"lo","at":0,"tone":"c1"},{"name":"mid","at":2,"tone":"warn"}]}
+```
+````
+
+`kind` `list` `array` `stack`. list: `cells` [{`v` `label` `tone`}] `head`
+`doubly` `cycle`. array: `cells` [value or {`v` `tone`}] `pointers` [{`name`
+`at` `tone`}] `start`. stack: `cells` `top`.
+
+### pipeline, layers, er
+
+````markdown
+```pipeline
+{"title":"Load-use stall","rows":[
+ {"label":"lw r1,0(r2)","cells":["IF","ID","EX","MEM","WB"]},
+ {"label":"add r3,r1,r4","start":1,"cells":["IF","ID","stall","EX","MEM","WB"]}]}
+```
+
+```layers
+{"title":"Memory hierarchy","items":[{"label":"Registers","note":"< 1 ns"},{"label":"L1","note":"1 ns"},{"label":"DRAM","note":"80 ns"}]}
+```
+
+```er
+{"entities":[{"name":"users","fields":[{"name":"id","type":"uuid","key":"pk"},["email","text"]]},
+             {"name":"posts","fields":[{"name":"id","type":"uuid","key":"pk"},{"name":"user_id","type":"uuid","key":"fk"}]}],
+ "links":[{"from":"posts.user_id","to":"users.id","card":"N:1"}]}
+```
+````
+
+`pipeline`: `rows` [{`label` `start` (0-based column) `cells` (text or
+`null`)}], `cycles`, `stall` (default `"stall"`, drawn as a dashed bubble);
+each distinct cell text gets a colour, 8 at most. `layers`: `items` [{`label`
+`note` `tone`}] top to bottom, `shape` `pyramid` or `stack`. `er`: `entities`
+[{`name` `fields` ([name, type] or {`name` `type` `key`: `pk`|`fk`})}],
+`links` [{`from` `to` as `table.field`, `card` like `N:1`}].
+
+### sortnet, topology, sankey
+
+````markdown
+```sortnet
+{"title":"Odd-even transposition","inputs":[3,1,2],"layers":[[[0,1]],[[1,2]],[[0,1]]]}
+```
+
+```topology
+{"kind":"hypercube","size":3,"path":[0,1,3,7],"compact":true}
+```
+
+```sankey
+{"nodes":[{"id":"in","label":"Ingress"},{"id":"api","label":"API"},{"id":"cdn","label":"CDN"}],
+ "links":[{"from":"in","to":"api","value":900},{"from":"in","to":"cdn","value":300}]}
+```
+````
+
+`sortnet` runs the network: a comparator `[a, b]` leaves the min on wire `a`,
+swaps show red, values print after each step (`values: false` hides them).
+`topology` `kind` `ring` `line` `mesh` `torus` `hypercube` `star` `complete`
+`tree`, `size` (count, side, dimension or depth), `labels` `index` `binary`
+`coords`, `path` (a route, checked hop by hop). `sankey` `nodes` [{`id`
+`label` `tone`}], `links` [{`from` `to` `value`}], `format`; cycles are rejected.
 
 ## 7 · Need a formula
 

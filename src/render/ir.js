@@ -10,6 +10,8 @@
  * @module render/ir
  */
 
+import { DIAGRAM_FENCES } from "./diagrams/names.js";
+
 /**
  * One diagnostic. `line` is 1-based in the source file; `block` names the block
  * that produced it (`"chart lines"`, `"frontmatter"`, …).
@@ -54,6 +56,8 @@
 /** @typedef {BlockBase & { type: "flow", info: string, data: unknown }} FlowBlock */
 /** @typedef {BlockBase & { type: "sequence", info: string, data: unknown }} SequenceBlock */
 /** @typedef {BlockBase & { type: "timeline", info: string, data: unknown }} TimelineBlock */
+/** One of the fences in `render/diagrams` (`tree`, `graph`, …); `type` is the fence name.
+ * @typedef {BlockBase & { type: import("./diagrams/names.js").DIAGRAM_FENCES[number], info: string, data: unknown }} DiagramBlock */
 /** @typedef {BlockBase & { type: "slides", info: string, data: unknown }} SlidesBlock */
 /** @typedef {BlockBase & { type: "video", info: string, data: unknown }} VideoBlock */
 /** One download or a list of them; see `validateFile`.
@@ -77,7 +81,7 @@
 /**
  * @typedef {MarkdownBlock | HeadingBlock | CalloutBlock | ContainerBlock | ChartBlock
  *   | StatsBlock | HeroBlock | FlowBlock | SequenceBlock | TimelineBlock | SlidesBlock
- *   | VideoBlock | FileBlock | CodeBlock | DiffBlock | MathBlock | HtmlBlock | FootnotesBlock} Block
+ *   | VideoBlock | FileBlock | CodeBlock | DiffBlock | MathBlock | HtmlBlock | FootnotesBlock | DiagramBlock} Block
  */
 
 /** @typedef {{ version: 1, meta: Meta, blocks: Block[] }} Doc */
@@ -88,12 +92,12 @@
 export const BLOCK_TYPES = /** @type {const} */ ([
   "markdown", "heading", "callout", "container", "chart", "stats", "hero",
   "code", "diff", "flow", "sequence", "math", "timeline", "slides", "video",
-  "file", "html", "footnotes",
+  "file", "html", "footnotes", ...DIAGRAM_FENCES,
 ]);
 
 /** Fence kinds that carry a JSON body rather than source text. */
 export const DATA_FENCES = /** @type {const} */ ([
-  "chart", "stats", "hero", "flow", "sequence", "timeline", "slides", "video", "file",
+  "chart", "stats", "hero", "flow", "sequence", "timeline", "slides", "video", "file", ...DIAGRAM_FENCES,
 ]);
 
 /** Callout tones, plus the GitHub alert names that map onto them. */
