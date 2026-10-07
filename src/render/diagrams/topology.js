@@ -15,6 +15,7 @@
 
 import {
   Ctx, ptr, show, wantObject, wantArray, optionalString, optionalBoolean, optionalEnum, unknownKeys,
+  tooMany,
 } from "../schema/common.js";
 import { INK, inkOf, n, text, svgOpen, figure, bounds, textW } from "./svg.js";
 
@@ -71,7 +72,7 @@ export function validate(errors, block, file) {
   }
 
   if (body.path === undefined) return;
-  if (!wantArray(ctx, body.path, "/path", "an array of node indices")) return;
+  if (tooMany(ctx, body.path, "/path", 128, "hops") || !wantArray(ctx, body.path, "/path", "an array of node indices")) return;
   const path = /** @type {unknown[]} */ (body.path);
   if (path.length < 2) {
     ctx.at("/path", `expected at least two node indices, got ${path.length}`);

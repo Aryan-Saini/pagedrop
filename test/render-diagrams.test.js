@@ -113,3 +113,23 @@ test("nested collections, extreme linear x and oversized figures are rejected at
   assert.equal(big.errors[0].line, 7);
   assert.match(big.errors[0].message, /^renders to \d+ KB/);
 });
+
+test("round 3: chart x is capped, tiny x spans keep distinct ticks, paths are capped", () => {
+  const long = one("chart lines", { x: Array.from({ length: 1001 }, (_, i) => i + 1), series: [{ name: "s", values: Array(1001).fill(1) }] });
+  assert.ok(long.errors.some((e) => e.message.startsWith("/x expected at most 1000")));
+  assert.ok(one("topology", { kind: "complete", size: 16, path: Array.from({ length: 129 }, (_, i) => (i % 2 ? 15 : 14)) })
+    .errors.some((e) => e.message.startsWith("/path")));
+
+  const tiny = one("chart lines", { x: [-2e-9, -1e-9], series: [{ name: "s", values: [1, 2] }] });
+  assert.equal(tiny.errors.length, 0);
+  const xTicks = [...tiny.html.matchAll(/class="tick tick-x"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.ok(xTicks.length >= 2 && new Set(xTicks).size === xTicks.length, `distinct x ticks, got ${xTicks}`);
+});
+
+test("diagram markup is only cached inside one render() call", async () => {
+  const { renderBlock } = await import("../src/render/index.js");
+  const r = one("layers", { items: [{ label: "ORIGINAL" }] });
+  const block = r.doc.blocks.find((b) => b.type === "layers");
+  block.data.items[0].label = "CHANGED";
+  assert.match(renderBlock(block), /CHANGED/);
+});

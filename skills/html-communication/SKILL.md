@@ -186,8 +186,10 @@ edges, no control characters in ids. `lanes` 24 lanes, 200 segments a lane, 100
 messages, names up to 40 characters, times within ±1e9. `structure` 64 cells,
 64 pointers. `pipeline` 64 rows, 128 steps, 2048 filled cells. `layers` 32.
 `er` 24 tables (no dots in names), 40 fields each, 100 links. `sortnet` 32
-wires, 64 layers. `sankey` 2 to 100 nodes, 400 links, values 1e-9 to 1e15. Log
-axes take values from 1e-100 to 1e100.
+wires, 64 layers. `topology` paths of 128 hops. `sankey` 2 to 100 nodes, 400
+links, values 1e-9 to 1e15. `lanes` segments span at least 1e-6 in total;
+`structure` `start` stays within ±1e9. Log axes take values from 1e-100 to
+1e100; a numeric `x` takes up to 1000 values within ±1e15 spanning at least 1e-9.
 
 ### flow and sequence
 

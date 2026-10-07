@@ -16,6 +16,7 @@ import {
   Ctx, ptr, show, wantObject, wantArray, wantNonEmptyArray, wantNumber, wantText,
   optionalString, optionalBoolean, wantFormat, wantTone, numberArrayOfLength,
   labelArray, seriesCap, unknownKeys, wantIsoDate, isoMs, numberArray, optionalEnum,
+  tooMany,
 } from "./common.js";
 
 
@@ -125,7 +126,7 @@ function linesBody(ctx, body) {
     return;
   }
 
-  if (!numberArray(ctx, body.x, "/x", "an array of numbers")) return;
+  if (tooMany(ctx, body.x, "/x", 1000, "x values") || !numberArray(ctx, body.x, "/x", "an array of numbers")) return;
   const x = /** @type {number[]} */ (body.x);
   if (x.length < 2) {
     ctx.at("/x", `expected at least 2 numbers, got ${x.length}`);

@@ -352,6 +352,31 @@ export function logTicks(lo, hi, base, max = 9) {
  */
 const logLabel = (v, fmt) => (v >= 1 ? fmt(v) : String(Number(v.toPrecision(6))));
 
+/** Smallest and largest of `vs`, by loop: a spread into Math.min hits the argument limit on long series. */
+function extent(vs) {
+  let lo = Infinity, hi = -Infinity;
+  for (const v of vs) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  return [lo, hi];
+}
+
+/**
+ * Round linear ticks over [lo, hi] at the data's own precision, unlike `ticks()`,
+ * which rounds to two decimals for the business-number charts. At most ~6 ticks.
+ * @returns {{ min: number, top: number, ticks: number[], step: number }}
+ */
+function linearTicks(lo, hi, zero) {
+  const niceStep = (span) => {
+    const raw = span / 4, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    return [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+  };
+  const step0 = niceStep(hi - lo || Math.abs(hi) || 1);
+  const min = zero ? Math.min(0, lo) : Math.floor(lo / step0) * step0;
+  const step = niceStep(hi - min || step0);
+  const count = Math.max(1, Math.ceil((hi - min) / step - 1e-9));
+  const ticks = Array.from({ length: count + 1 }, (_, i) => Number((min + i * step).toPrecision(12)));
+  return { min, top: count * step, ticks, step };
+}
+
 /**
  * A numeric axis mapped onto [p0, p1] pixels: a log axis on powers of its
  * base, or a linear one on round steps (starting at zero when `zero` is set).
@@ -359,16 +384,16 @@ const logLabel = (v, fmt) => (v >= 1 ? fmt(v) : String(Number(v.toPrecision(6)))
  */
 function numericAxis(values, scale, p0, p1, fmt, zero) {
   const base = baseOf(scale);
-  const lo = Math.min(...values), hi = Math.max(...values);
+  const [lo, hi] = extent(values);
   if (base) {
     const t = logTicks(lo, hi, base);
     const span = Math.log(t.hi) - Math.log(t.lo);
     return { at: (v) => p0 + ((Math.log(v) - Math.log(t.lo)) / span) * (p1 - p0), ticks: t.ticks, label: (v) => logLabel(v, fmt) };
   }
-  const step0 = ticks(hi - lo).ticks[1] || 1;
-  const min = zero ? Math.min(0, lo) : Math.floor(lo / step0) * step0;
-  const { top, ticks: tk } = ticks(hi - min);
-  return { at: (v) => p0 + ((v - min) / top) * (p1 - p0), ticks: tk.map((t) => n(t + min)), label: fmt };
+  const t = linearTicks(lo, hi, zero);
+  // Steps under 0.01 would print as "0" through the presets, so they print as the plain number.
+  const label = t.step < 0.01 ? (v) => String(Number(v.toPrecision(6))) : fmt;
+  return { at: (v) => p0 + ((v - t.min) / t.top) * (p1 - p0), ticks: t.ticks, label };
 }
 
 /**
@@ -402,10 +427,9 @@ export function lines(labels, series, {
     yTicks = axis.ticks.map((v) => ({ v, label: axis.label(v) }));
     yOf = axis.at;
   } else {
-    const max = Math.max(...all);
+    const [lo, max] = extent(all);
     // With no zero floor, drop the baseline to a round number below the low point
     // so the axis reads 250 / 300 / 350 rather than 284 / 334 / 384.
-    const lo = Math.min(...all);
     const step0 = ticks(max - lo).ticks[1] || 1;
     const min = zeroFloor ? 0 : Math.floor(lo / step0) * step0;
     const { top, ticks: tk } = ticks(max - min);
@@ -661,11 +685,11 @@ export function scatter(points, {
   /** @param {number[]} vs @param {string} scale @param {(v: number) => string} f */
   const axisOf = (vs, scale, f) => {
     if (baseOf(scale)) {
-      const t = logTicks(Math.min(...vs), Math.max(...vs), baseOf(scale));
+      const t = logTicks(...extent(vs), baseOf(scale));
       const span = Math.log(t.hi) - Math.log(t.lo);
       return { ticks: t.ticks, frac: (v) => (Math.log(v) - Math.log(t.lo)) / span, label: (v) => logLabel(v, f) };
     }
-    const { top, ticks: tk } = ticks(Math.max(...vs));
+    const { top, ticks: tk } = ticks(extent(vs)[1]);
     return { ticks: tk, frac: (v) => v / top, label: f };
   };
   const xa = axisOf(points.map((p) => p.x), xScale, fx);

@@ -47,19 +47,30 @@ export { DIAGRAM_FENCES } from "./names.js";
  */
 export const FIGURE_BUDGET = 320 * 1024;
 
-/** @type {WeakMap<object, string>} */
-const drawn = new WeakMap();
+/** Markup drawn during the current `withDiagramCache` call, by block identity. */
+let drawn = /** @type {Map<object, string> | null} */ (null);
 
 /**
- * Render a diagram block once. The size check in `render()` and the page body
- * both ask for the same block, so the markup is cached by block identity.
- * @param {{ type: string, data: unknown }} block
+ * Run `fn` with diagram markup cached by block, so the size check in `render()`
+ * and the page body draw each diagram once. Outside it nothing is cached, so a
+ * caller that edits a block and renders it again always gets fresh markup.
+ * @template T @param {() => T} fn @returns {T}
  */
+export function withDiagramCache(fn) {
+  drawn = new Map();
+  try {
+    return fn();
+  } finally {
+    drawn = null;
+  }
+}
+
+/** @param {{ type: string, data: unknown }} block */
 export function renderDiagram(block) {
-  let html = drawn.get(block);
+  let html = drawn?.get(block);
   if (html === undefined) {
     html = DIAGRAMS[block.type].render(block);
-    drawn.set(block, html);
+    drawn?.set(block, html);
   }
   return html;
 }
