@@ -74,7 +74,18 @@ export function renderBody(doc) {
   const toc = contents(blocks);
   if (toc) parts.push(toc);
 
-  for (; i < blocks.length; i++) parts.push(renderBlock(blocks[i], ctx));
+  for (; i < blocks.length; i++) {
+    // Consecutive compact diagrams share one wrapping row, so snapshots and
+    // small topologies read side by side.
+    if (!isCompactDiagram(blocks[i]) || !isCompactDiagram(blocks[i + 1])) {
+      parts.push(renderBlock(blocks[i], ctx));
+      continue;
+    }
+    const row = [];
+    while (isCompactDiagram(blocks[i])) row.push(renderBlock(blocks[i++], ctx));
+    i--;
+    parts.push(`<div class="fig-row">\n${row.join("\n")}\n</div>`);
+  }
   parts.push(...ctx.lightboxes);
 
   const wrap = `<div class="wrap"><main>\n${parts.filter(Boolean).join("\n")}\n</main></div>`;
@@ -182,6 +193,11 @@ export function renderBlock(block, ctx = newCtx()) {
     case "footnotes": return footnotes(block);
     default: return Object.hasOwn(DIAGRAMS, block.type) ? DIAGRAMS[block.type].render(block) : "";
   }
+}
+
+/** A diagram fence that asked for `compact`. */
+function isCompactDiagram(block) {
+  return !!block && Object.hasOwn(DIAGRAMS, block.type) && block.data?.compact === true;
 }
 
 /* ------------------------------------------------------------------ prose */

@@ -15,8 +15,9 @@
 import {
   Ctx, ptr, show, wantObject, wantArray, wantNonEmptyArray, wantNumber, wantText,
   optionalString, optionalBoolean, wantFormat, wantTone, numberArrayOfLength,
-  labelArray, seriesCap, unknownKeys, wantIsoDate, isoMs,
+  labelArray, seriesCap, unknownKeys, wantIsoDate, isoMs, numberArray, optionalEnum,
 } from "./common.js";
+
 
 /** Every `chart` sub-kind, in the order the error message lists them. */
 export const CHART_KINDS = /** @type {const} */ ([
@@ -24,8 +25,11 @@ export const CHART_KINDS = /** @type {const} */ ([
   "waterfall", "scatter", "funnel", "schedule", "small-multiples", "share",
 ]);
 
-/** Scatter carries its own axis titles on top of the envelope. */
-const SCATTER_KEYS = ["title", "note", "caption", "format", "src", "points", "xTitle", "yTitle"];
+/** Axis scales `lines` and `scatter` accept; `linear` is the default. */
+export const SCALES = /** @type {const} */ (["linear", "log2", "log10"]);
+
+/** Scatter carries its own axis titles and scales on top of the envelope. */
+const SCATTER_KEYS = ["title", "note", "caption", "format", "src", "points", "xTitle", "yTitle", "xScale", "yScale"];
 
 /** Keys every chart envelope carries regardless of kind. */
 const BASE_KEYS = ["title", "note", "caption", "format", "src"];
@@ -62,18 +66,88 @@ function labelsAndValues(ctx, body) {
  */
 function labelsAndSeries(ctx, body) {
   if (!labelArray(ctx, body.labels, "/labels")) return;
-  const labels = /** @type {string[]} */ (body.labels);
-  if (!wantNonEmptyArray(ctx, body.series, "/series", "at least one series")) return;
+  seriesOf(ctx, body, /** @type {string[]} */ (body.labels).length, "labels", ["name", "values", "tone"]);
+}
+
+/**
+ * `series: [{ name, values }]`, each `count` long to match `against`.
+ * @returns {boolean} true when every series checked out
+ */
+function seriesOf(ctx, body, count, against, keys) {
+  if (!wantNonEmptyArray(ctx, body.series, "/series", "at least one series")) return false;
   const series = /** @type {unknown[]} */ (body.series);
+  const start = ctx.errors.length;
   seriesCap(ctx, series.length, "/series");
   series.forEach((s, i) => {
     const at = ptr("", "series", i);
     if (!wantObject(ctx, s, at, "a series { name, values }")) return;
     wantText(ctx, s.name, ptr(at, "name"), "a series name");
-    numberArrayOfLength(ctx, s.values, ptr(at, "values"), labels.length, "labels");
-    unknownKeys(ctx, s, at, ["name", "values", "tone"]);
+    numberArrayOfLength(ctx, s.values, ptr(at, "values"), count, against);
+    unknownKeys(ctx, s, at, keys);
     wantTone(ctx, s.tone, ptr(at, "tone"));
+    if (keys.includes("dashed")) optionalBoolean(ctx, s.dashed, ptr(at, "dashed"));
   });
+  return ctx.errors.length === start;
+}
+
+/**
+ * A log axis cannot place zero or a negative number. Reports every offending
+ * value at `pointerOf(i)`; a no-op on a linear axis.
+ * @returns {boolean} true when every value can be placed
+ */
+function positiveOnLog(ctx, values, scale, axis, pointerOf) {
+  if (scale !== "log2" && scale !== "log10") return true;
+  let ok = true;
+  values.forEach((v, i) => {
+    if (!(v > 0)) ok = ctx.at(pointerOf(i), `expected a value > 0 on the ${scale} ${axis} axis, got ${show(v)}`);
+  });
+  return ok;
+}
+
+/**
+ * `chart lines`: categorical `labels`, or numeric `x` positions (required for
+ * a log x axis), with series as long as whichever one is given.
+ */
+function linesBody(ctx, body) {
+  const xOk = optionalEnum(ctx, body.xScale, "/xScale", SCALES);
+  const yOk = optionalEnum(ctx, body.yScale, "/yScale", SCALES);
+  const scalesOk = xOk && yOk;
+  const keys = ["name", "values", "tone", "dashed"];
+  if (body.x === undefined) {
+    if (body.xScale === "log2" || body.xScale === "log10") {
+      ctx.at("/x", `expected an array of numbers for xScale ${show(body.xScale)}, got nothing`);
+    }
+    if (!labelArray(ctx, body.labels, "/labels")) return;
+    const ok = seriesOf(ctx, body, /** @type {string[]} */ (body.labels).length, "labels", keys);
+    if (ok && scalesOk) logSeries(ctx, body);
+    return;
+  }
+
+  if (!numberArray(ctx, body.x, "/x", "an array of numbers")) return;
+  const x = /** @type {number[]} */ (body.x);
+  if (x.length < 2) {
+    ctx.at("/x", `expected at least 2 numbers, got ${x.length}`);
+    return;
+  }
+  for (let i = 1; i < x.length; i++) {
+    if (!(x[i] > x[i - 1])) {
+      ctx.at(ptr("", "x", i), `expected x to increase, got ${show(x[i])} after ${show(x[i - 1])}`);
+      return;
+    }
+  }
+  if (scalesOk) positiveOnLog(ctx, x, body.xScale, "x", (i) => ptr("", "x", i));
+  // Labels are optional beside `x`; when given they name each point.
+  if (body.labels !== undefined && labelArray(ctx, body.labels, "/labels")) {
+    const n = /** @type {string[]} */ (body.labels).length;
+    if (n !== x.length) ctx.at("/labels", `expected ${x.length} labels to match x, got ${n}`);
+  }
+  if (seriesOf(ctx, body, x.length, "x", keys) && scalesOk) logSeries(ctx, body);
+}
+
+/** Every series value must be positive on a log y axis. */
+function logSeries(ctx, body) {
+  /** @type {{ values: number[] }[]} */ (body.series).forEach((s, si) =>
+    positiveOnLog(ctx, s.values, body.yScale, "y", (i) => ptr("", "series", si, "values", i)));
 }
 
 /** Per-kind body checks, keyed by sub-kind. Each returns the extra keys it allows. */
@@ -107,10 +181,10 @@ const KINDS = {
   },
 
   lines(ctx, body) {
-    labelsAndSeries(ctx, body);
+    linesBody(ctx, body);
     optionalBoolean(ctx, body.area, "/area");
     optionalBoolean(ctx, body.zeroFloor, "/zeroFloor");
-    return ["labels", "series", "area", "zeroFloor"];
+    return ["labels", "x", "series", "area", "zeroFloor", "xScale", "yScale"];
   },
 
   grouped(ctx, body) {
@@ -187,12 +261,14 @@ const KINDS = {
   scatter(ctx, body) {
     optionalString(ctx, body.xTitle, "/xTitle");
     optionalString(ctx, body.yTitle, "/yTitle");
+    const xLog = optionalEnum(ctx, body.xScale, "/xScale", SCALES) && body.xScale;
+    const yLog = optionalEnum(ctx, body.yScale, "/yScale", SCALES) && body.yScale;
     if (!wantNonEmptyArray(ctx, body.points, "/points", "at least one point")) return SCATTER_KEYS;
     /** @type {unknown[]} */ (body.points).forEach((p, i) => {
       const at = ptr("", "points", i);
       if (!wantObject(ctx, p, at, "a point { x, y }")) return;
-      wantNumber(ctx, p.x, ptr(at, "x"));
-      wantNumber(ctx, p.y, ptr(at, "y"));
+      if (wantNumber(ctx, p.x, ptr(at, "x"))) positiveOnLog(ctx, [p.x], xLog, "x", () => ptr(at, "x"));
+      if (wantNumber(ctx, p.y, ptr(at, "y"))) positiveOnLog(ctx, [p.y], yLog, "y", () => ptr(at, "y"));
       if (p.size !== undefined && wantNumber(ctx, p.size, ptr(at, "size"))) {
         // Bubble area is sqrt(size / max); a negative radius is not drawable.
         if (/** @type {number} */ (p.size) < 0) ctx.at(ptr(at, "size"), `expected a size of 0 or more, got ${show(p.size)}`);

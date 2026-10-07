@@ -120,16 +120,19 @@ export function clip(p, ux, uy, kind) {
 }
 
 /**
- * Open an SVG with a viewBox. Diagrams are 520px minimum by default so labels
- * stay legible on a phone (the page scrolls them sideways); `compact` drops that
- * floor for small diagrams meant to sit side by side.
+ * Open an SVG with a viewBox, drawn at 1.15x its layout units. The shell gives
+ * charts a 520px minimum so labels stay legible on a phone (the page scrolls them
+ * sideways). A diagram whose natural size is under that floor would only be blown
+ * up past its set type size, so it drops the floor and sits centred at natural
+ * size; `compact` drops it for any diagram, so small ones can share a row.
  * @param {{ x: number, y: number, w: number, h: number }} box
  * @param {{ label: string, maxW?: number, compact?: boolean }} o
  */
 export function svgOpen(box, o) {
   const maxW = o.maxW ?? Math.round(box.w * 1.15);
+  const compact = o.compact || maxW < 520;
   return `<svg viewBox="${n(box.x)} ${n(box.y)} ${n(box.w)} ${n(box.h)}" width="100%" style="max-width:${maxW}px" ` +
-    `class="chart diagram${o.compact ? " compact" : ""}" role="img" aria-label="${esc(o.label)}">`;
+    `class="chart diagram${compact ? " compact" : ""}" role="img" aria-label="${esc(o.label)}">`;
 }
 
 /** The figure every diagram returns: optional title, the scrolling SVG, optional note. */

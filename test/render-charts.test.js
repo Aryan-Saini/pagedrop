@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import { parseMarkdown } from "../src/render/parse.js";
 import {
-  FORMATS, SERIES, TONE_INK, compact, formatter, inkOn, meter, renderChart, seriesColor, sparkline, ticks,
+  FORMATS, SERIES, TONE_INK, compact, formatter, inkOn, logTicks, meter, renderChart, seriesColor, sparkline, ticks,
 } from "../src/render/charts.js";
+import { validateChart } from "../src/render/schema/chart.js";
 import { CSS } from "../src/render/shell.js";
 import { renderFlow, renderSequence } from "../src/render/diagram.js";
 
@@ -263,4 +264,105 @@ test("every tone ink clears 3:1 on true black", () => {
 
 test("chart text gets a true-black halo from the stylesheet", () => {
   assert.match(CSS, /\.chart text\{[^}]*paint-order:stroke fill;stroke:#000;stroke-width:3px;stroke-linejoin:round/);
+});
+
+/* ------------------------------------------------------------ log axes */
+
+/** Diagnostics for one chart body, message text only. */
+const chartErrs = (kind, data) => {
+  const out = [];
+  validateChart(out, { kind, data, line: 1 }, "t.md");
+  return out.map((e) => e.message);
+};
+
+const SPEEDUP = {
+  xScale: "log2", yScale: "log2", x: [1, 2, 4, 8, 16, 32, 64],
+  series: [
+    { name: "Ideal", values: [1, 2, 4, 8, 16, 32, 64], dashed: true },
+    { name: "Amdahl f = 5%", values: [1, 1.9, 3.48, 5.93, 9.14, 12.55, 15.42] },
+  ],
+};
+
+test("logTicks() snaps to powers of the base and thins a wide range", () => {
+  assert.deepEqual(logTicks(1, 64, 2), { lo: 1, hi: 64, ticks: [1, 2, 4, 8, 16, 32, 64] });
+  assert.deepEqual(logTicks(0.023, 1.9, 10), { lo: 0.01, hi: 10, ticks: [0.01, 0.1, 1, 10] });
+  // A single power still spans one step.
+  assert.deepEqual(logTicks(8, 8, 2).ticks, [8, 16]);
+  const wide = logTicks(1, 2 ** 20, 2);
+  assert.ok(wide.ticks.length <= 9);
+  assert.equal(wide.ticks[0], 1);
+  assert.ok(wide.hi >= 2 ** 20 && wide.ticks.at(-1) === wide.hi);
+});
+
+test("log axes place powers of the base evenly and dash a reference series", () => {
+  const html = renderChart({ type: "chart", kind: "lines", data: SPEEDUP });
+  const ideal = html.match(/<path d="([^"]+)"[^>]*stroke-dasharray="6 5"/)[1];
+  const pts = [...ideal.matchAll(/[ML]([\d.]+),([\d.]+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.equal(pts.length, 7);
+  const steps = pts.slice(1).map((p, i) => [p[0] - pts[i][0], p[1] - pts[i][1]]);
+  // Ideal speedup on log2-log2 is a straight line: every doubling is the same step.
+  for (const [dx, dy] of steps) {
+    assert.ok(Math.abs(dx - steps[0][0]) < 0.02 && Math.abs(dy - steps[0][1]) < 0.02);
+  }
+  assert.equal((html.match(/stroke-dasharray/g) ?? []).length, 1);
+  assert.match(html, /class="stroke" style="background:repeating-linear-gradient/);
+  // Gridlines on both log axes: 7 horizontal, 7 vertical.
+  assert.equal((html.match(/class="grid"/g) ?? []).length, 14);
+  for (const t of ["1", "2", "64"]) assert.match(html, new RegExp(`class="tick tick-x">${t}<`));
+});
+
+test("log tick labels below one never round to zero", () => {
+  const html = renderChart({ type: "chart", kind: "lines", data: {
+    format: "int", yScale: "log10", labels: ["a", "b"], series: [{ name: "loss", values: [1.8, 0.023] }],
+  } });
+  for (const t of ["0.01", "0.1", "1", "10"]) assert.match(html, new RegExp(`class="tick tick-y">${t}<`));
+});
+
+test("lines and scatter keep labels inside the viewBox on log axes", () => {
+  const blocks = [
+    { type: "chart", kind: "lines", data: SPEEDUP },
+    { type: "chart", kind: "lines", data: { yScale: "log10", x: [0.5, 3, 900], series: [{ name: "a", values: [1e-6, 3, BIG] }] } },
+    { type: "chart", kind: "scatter", data: { xScale: "log10", yScale: "log2", points: [{ x: 0.001, y: 0.25 }, { x: BIG, y: 4096 }], xTitle: LONG, yTitle: LONG } },
+  ];
+  for (const block of blocks) {
+    for (const t of textExtents(svgsOf(renderChart(block))[0])) {
+      assert.ok(t.lo >= t.min && t.hi <= t.max, `"${t.text}" spans ${t.lo.toFixed(1)}..${t.hi.toFixed(1)}`);
+    }
+  }
+});
+
+test("explicit linear scales render exactly what absent scales do", () => {
+  const plain = { labels: ["a", "b", "c"], series: [{ name: "s", values: [3, 9, 4] }] };
+  const lines = (data) => renderChart({ type: "chart", kind: "lines", data });
+  assert.equal(lines({ ...plain, xScale: "linear", yScale: "linear" }), lines(plain));
+  const pts = { points: [{ x: 1, y: 2 }, { x: 30, y: 40 }] };
+  const scatter = (data) => renderChart({ type: "chart", kind: "scatter", data });
+  assert.equal(scatter({ ...pts, xScale: "linear", yScale: "linear" }), scatter(pts));
+});
+
+test("log axes reject values they cannot place, with a pointer to each", () => {
+  assert.deepEqual(chartErrs("lines", { yScale: "log10", labels: ["a", "b"], series: [{ name: "s", values: [1, 0] }] }),
+    ["/series/0/values/1 expected a value > 0 on the log10 y axis, got 0"]);
+  assert.deepEqual(chartErrs("lines", { xScale: "log2", x: [0, 1], series: [{ name: "s", values: [1, 2] }] }),
+    ["/x/0 expected a value > 0 on the log2 x axis, got 0"]);
+  assert.deepEqual(chartErrs("lines", { xScale: "log2", labels: ["a", "b"], series: [{ name: "s", values: [1, 2] }] }),
+    ['/x expected an array of numbers for xScale "log2", got nothing']);
+  assert.deepEqual(chartErrs("lines", { yScale: "ln", labels: ["a", "b"], series: [{ name: "s", values: [1, 2] }] }),
+    ['/yScale expected one of linear log2 log10, got "ln"']);
+  assert.deepEqual(chartErrs("scatter", { xScale: "log10", points: [{ x: -3, y: 1 }] }),
+    ["/points/0/x expected a value > 0 on the log10 x axis, got -3"]);
+});
+
+test("numeric x must increase and set the series length", () => {
+  assert.deepEqual(chartErrs("lines", { x: [1, 4, 2], series: [{ name: "s", values: [1, 2, 3] }] }),
+    ["/x/2 expected x to increase, got 2 after 4"]);
+  assert.deepEqual(chartErrs("lines", { x: [1, 2, 3], series: [{ name: "s", values: [1, 2] }] }),
+    ["/series/0/values expected 3 numbers to match x, got 2"]);
+  assert.deepEqual(chartErrs("lines", { x: [1, 2], labels: ["a"], series: [{ name: "s", values: [1, 2] }] }),
+    ["/labels expected 2 labels to match x, got 1"]);
+  assert.deepEqual(chartErrs("lines", { x: [1, 2], series: [{ name: "s", values: [1, 2], dashed: "yes" }] }),
+    ['/series/0/dashed expected true or false, got "yes"']);
+  // `dashed` belongs to lines only.
+  assert.deepEqual(chartErrs("grouped", { labels: ["a"], series: [{ name: "s", values: [1], dashed: true }] }),
+    ['/series/0/dashed unknown key "dashed"; keys: name values tone']);
 });

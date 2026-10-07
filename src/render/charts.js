@@ -193,9 +193,12 @@ function gridAndAxis(g, top, tk, fmt) {
   return out;
 }
 
-function legend(names, mark = "bar", colors = names.map((_, i) => seriesColor(i))) {
+/** A dashed line key: the same 14px stroke, broken into 4px dashes. */
+const dashKey = (color) => `repeating-linear-gradient(90deg,${color} 0 4px,transparent 4px 7px)`;
+
+function legend(names, mark = "bar", colors = names.map((_, i) => seriesColor(i)), dashed = []) {
   const key = (i) => mark === "line"
-    ? `<span class="stroke" style="background:${colors[i]}"></span>`
+    ? `<span class="stroke" style="background:${dashed[i] ? dashKey(colors[i]) : colors[i]}"></span>`
     : `<span class="swatch" style="background:${colors[i]}"></span>`;
   return `<div class="legend">` + names.map((nm, i) =>
     `<span class="key">${key(i)}${esc(nm)}</span>`).join("") + `</div>`;
@@ -324,11 +327,59 @@ export function stacked(rows, names, { title = "", note = "", format = (v) => co
   return frame(svgOpen(W, H, title || "stacked bars") + body + "</svg>", title, note, legend(names));
 }
 
+/** The base of an axis scale name (`linear` `log2` `log10`), or 0 for linear. */
+const baseOf = (scale) => (scale === "log2" ? 2 : scale === "log10" ? 10 : 0);
+
 /**
- * Lines over a shared x. series: [{ name, values: [..], tone? }], x labels in `labels`.
+ * A log axis covering [lo, hi] (both > 0). The domain snaps out to whole
+ * powers of `base` and a tick sits on each power, thinned to at most `max`
+ * so a wide log2 range does not crowd its labels.
+ */
+export function logTicks(lo, hi, base, max = 9) {
+  const L = Math.log(base);
+  const e0 = Math.floor(Math.log(lo) / L + 1e-9);
+  let e1 = Math.max(e0 + 1, Math.ceil(Math.log(hi) / L - 1e-9));
+  const every = Math.ceil((e1 - e0 + 1) / max);
+  e1 = e0 + Math.ceil((e1 - e0) / every) * every;
+  const out = [];
+  for (let e = e0; e <= e1; e += every) out.push(base ** e);
+  return { lo: base ** e0, hi: base ** e1, ticks: out };
+}
+
+/**
+ * Tick text on a log axis. Powers of the base below one would round to "0"
+ * under most presets, so they print as the plain number.
+ */
+const logLabel = (v, fmt) => (v >= 1 ? fmt(v) : String(Number(v.toPrecision(6))));
+
+/**
+ * A numeric axis mapped onto [p0, p1] pixels: a log axis on powers of its
+ * base, or a linear one on round steps (starting at zero when `zero` is set).
+ * @returns {{ at: (v: number) => number, ticks: number[], label: (v: number) => string }}
+ */
+function numericAxis(values, scale, p0, p1, fmt, zero) {
+  const base = baseOf(scale);
+  const lo = Math.min(...values), hi = Math.max(...values);
+  if (base) {
+    const t = logTicks(lo, hi, base);
+    const span = Math.log(t.hi) - Math.log(t.lo);
+    return { at: (v) => p0 + ((Math.log(v) - Math.log(t.lo)) / span) * (p1 - p0), ticks: t.ticks, label: (v) => logLabel(v, fmt) };
+  }
+  const step0 = ticks(hi - lo).ticks[1] || 1;
+  const min = zero ? Math.min(0, lo) : Math.floor(lo / step0) * step0;
+  const { top, ticks: tk } = ticks(hi - min);
+  return { at: (v) => p0 + ((v - min) / top) * (p1 - p0), ticks: tk.map((t) => n(t + min)), label: fmt };
+}
+
+/**
+ * Lines over a shared x. series: [{ name, values: [..], tone?, dashed? }], x labels in `labels`.
  * The last point of each line is dotted and end-labelled. A series `tone`
  * (`good` `bad` `warn` `flat`) colours its line, key and end label; without
- * one the line takes its palette slot and the end label stays white.
+ * one the line takes its palette slot and the end label stays white. A
+ * `dashed` series is a reference line (ideal speedup, a budget).
+ *
+ * `x` swaps the evenly spaced categories for numeric positions; `xScale` and
+ * `yScale` put either axis on a log2 or log10 scale (a log x needs `x`).
  */
 export function lines(labels, series, {
   title = "",
@@ -337,55 +388,88 @@ export function lines(labels, series, {
   height = 240,
   area = false,
   zeroFloor = true,
+  x = /** @type {number[] | null} */ (null),
+  xScale = "linear",
+  yScale = "linear",
 } = {}) {
   const W = 720, H = height;
   const all = series.flatMap((s) => s.values);
-  const max = Math.max(...all);
-  // With no zero floor, drop the baseline to a round number below the low point
-  // so the axis reads 250 / 300 / 350 rather than 284 / 334 / 384.
-  const lo = Math.min(...all);
-  const step0 = ticks(max - lo).ticks[1] || 1;
-  const min = zeroFloor ? 0 : Math.floor(lo / step0) * step0;
-  const { top, ticks: tk } = ticks(max - min);
+  const g = { x0: 0, x1: 0, y0: 16, y1: H - 34 };
+  /** @type {{ v: number, label: string }[]} */ let yTicks;
+  /** @type {(v: number) => number} */ let yOf;
+  if (baseOf(yScale)) {
+    const axis = numericAxis(all, yScale, g.y1, g.y0, format, false);
+    yTicks = axis.ticks.map((v) => ({ v, label: axis.label(v) }));
+    yOf = axis.at;
+  } else {
+    const max = Math.max(...all);
+    // With no zero floor, drop the baseline to a round number below the low point
+    // so the axis reads 250 / 300 / 350 rather than 284 / 334 / 384.
+    const lo = Math.min(...all);
+    const step0 = ticks(max - lo).ticks[1] || 1;
+    const min = zeroFloor ? 0 : Math.floor(lo / step0) * step0;
+    const { top, ticks: tk } = ticks(max - min);
+    yTicks = tk.map((t) => ({ v: t + min, label: format(t + min) }));
+    yOf = (v) => g.y1 - ((v - min) / top) * (g.y1 - g.y0);
+  }
   // End labels sit 10px right of the last point, so the plot stops short by their width.
   const endW = widest(series.map((s) => format(s.values.at(-1) ?? 0)));
-  const g = { x0: axisX0(tk.map((t) => format(t + min))), x1: W - Math.ceil(endW + 14), y0: 16, y1: H - 34 };
+  g.x0 = axisX0(yTicks.map((t) => t.label));
+  g.x1 = W - Math.ceil(endW + 14);
   const colors = series.map((s, si) => TONE_INK[s.tone] ?? seriesColor(si));
-  const yOf = (v) => g.y1 - ((v - min) / top) * (g.y1 - g.y0);
-  const xOf = (i) => g.x0 + (i / Math.max(1, labels.length - 1)) * (g.x1 - g.x0);
+  const count = x ? x.length : labels.length;
+  /** @type {(i: number) => number} */ let xOf = (i) => g.x0 + (i / Math.max(1, count - 1)) * (g.x1 - g.x0);
+  /** @type {{ at: (v: number) => number, ticks: number[], label: (v: number) => string } | null} */
+  let xAxis = null;
+  if (x) {
+    xAxis = numericAxis(x, xScale, g.x0, g.x1, (v) => compact(v), true);
+    const at = xAxis.at;
+    xOf = (i) => at(x[i]);
+  }
+  const pointLabel = (i) => labels[i] ?? (xAxis ? xAxis.label(/** @type {number[]} */ (x)[i]) : "");
 
   let body = "";
-  for (const t of tk) {
-    const y = yOf(t + min);
+  for (const t of yTicks) {
+    const y = yOf(t.v);
     body += `<line x1="${n(g.x0)}" y1="${n(y)}" x2="${n(g.x1)}" y2="${n(y)}" class="grid"/>`;
-    body += `<text x="${n(g.x0 - 8)}" y="${n(y + 4)}" class="tick tick-y">${esc(format(t + min))}</text>`;
+    body += `<text x="${n(g.x0 - 8)}" y="${n(y + 4)}" class="tick tick-y">${esc(t.label)}</text>`;
+  }
+  if (xAxis && baseOf(xScale)) {
+    for (const t of xAxis.ticks) {
+      body += `<line x1="${n(xAxis.at(t))}" y1="${n(g.y0)}" x2="${n(xAxis.at(t))}" y2="${n(g.y1)}" class="grid"/>`;
+    }
   }
   series.forEach((s, si) => {
     const color = colors[si];
     const d = s.values.map((v, i) => `${i ? "L" : "M"}${n(xOf(i))},${n(yOf(v))}`).join(" ");
     if (area && series.length === 1) {
-      body += `<path d="${d} L${n(xOf(s.values.length - 1))},${n(g.y1)} L${n(g.x0)},${n(g.y1)} Z" fill="${color}" opacity="0.10"/>`;
+      body += `<path d="${d} L${n(xOf(s.values.length - 1))},${n(g.y1)} L${n(xOf(0))},${n(g.y1)} Z" fill="${color}" opacity="0.10"/>`;
     }
-    body += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    body += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"` +
+      `${s.dashed ? ` stroke-dasharray="6 5"` : ""}/>`;
     s.values.forEach((v, i) => {
       body += `<circle cx="${n(xOf(i))}" cy="${n(yOf(v))}" r="9" fill="transparent">` +
-        `<title>${esc(s.name)} · ${esc(labels[i])}: ${esc(format(v))}</title></circle>`;
+        `<title>${esc(s.name)} · ${esc(pointLabel(i))}: ${esc(format(v))}</title></circle>`;
     });
     const li = s.values.length - 1;
     body += `<circle cx="${n(xOf(li))}" cy="${n(yOf(s.values[li]))}" r="4" fill="${color}" stroke="#000" stroke-width="2"/>`;
     body += `<text x="${n(xOf(li) + 10)}" y="${n(yOf(s.values[li]) + 4)}" class="val val-left"${inkStyle(TONE_INK[s.tone])}>` +
       `${esc(format(s.values[li]))}</text>`;
   });
-  labels.forEach((l, i) => {
-    if (labels.length > 8 && i % 2) return;
-    body += xTick(xOf(i), g.y1 + 18, l);
-  });
+  if (xAxis) {
+    for (const t of xAxis.ticks) body += xTick(xAxis.at(t), g.y1 + 18, xAxis.label(t));
+  } else {
+    labels.forEach((l, i) => {
+      if (labels.length > 8 && i % 2) return;
+      body += xTick(xOf(i), g.y1 + 18, l);
+    });
+  }
   body += `<line x1="${n(g.x0)}" y1="${n(g.y1)}" x2="${n(g.x1)}" y2="${n(g.y1)}" class="axis"/>`;
   return frame(
     svgOpen(W, H, title || "line chart") + body + "</svg>",
     title,
     note,
-    series.length > 1 ? legend(series.map((s) => s.name), "line", colors) : "",
+    series.length > 1 ? legend(series.map((s) => s.name), "line", colors, series.map((s) => s.dashed === true)) : "",
   );
 }
 
@@ -569,23 +653,37 @@ export function waterfall(rows, {
 export function scatter(points, {
   title = "", note = "", height = 280, xTitle = "", yTitle = "",
   fx = (v) => compact(v), fy = (v) => compact(v), color = SERIES[0],
+  xScale = "linear", yScale = "linear",
 } = {}) {
   const W = 720, H = height;
-  const { top: xTop, ticks: xtk } = ticks(Math.max(...points.map((p) => p.x)));
-  const { top: yTop, ticks: ytk } = ticks(Math.max(...points.map((p) => p.y)));
+  const g = { x0: 0, x1: W - 16, y0: 16, y1: H - 42 };
+  // Linear axes start at zero; a log axis snaps to powers of its base.
+  /** @param {number[]} vs @param {string} scale @param {(v: number) => string} f */
+  const axisOf = (vs, scale, f) => {
+    if (baseOf(scale)) {
+      const t = logTicks(Math.min(...vs), Math.max(...vs), baseOf(scale));
+      const span = Math.log(t.hi) - Math.log(t.lo);
+      return { ticks: t.ticks, frac: (v) => (Math.log(v) - Math.log(t.lo)) / span, label: (v) => logLabel(v, f) };
+    }
+    const { top, ticks: tk } = ticks(Math.max(...vs));
+    return { ticks: tk, frac: (v) => v / top, label: f };
+  };
+  const xa = axisOf(points.map((p) => p.x), xScale, fx);
+  const ya = axisOf(points.map((p) => p.y), yScale, fy);
   // A y title stands at x = 14, rotated; the tick labels keep clear of it.
-  const g = { x0: Math.max(58, Math.ceil(widest(ytk.map(fy)) + 10 + (yTitle ? 22 : 0))), x1: W - 16, y0: 16, y1: H - 42 };
+  g.x0 = Math.max(58, Math.ceil(widest(ya.ticks.map(ya.label)) + 10 + (yTitle ? 22 : 0)));
   const maxSize = Math.max(...points.map((p) => p.size ?? 1));
-  const xOf = (v) => g.x0 + (v / xTop) * (g.x1 - g.x0);
-  const yOf = (v) => g.y1 - (v / yTop) * (g.y1 - g.y0);
+  const xOf = (v) => g.x0 + xa.frac(v) * (g.x1 - g.x0);
+  const yOf = (v) => g.y1 - ya.frac(v) * (g.y1 - g.y0);
 
   let body = "";
-  for (const t of ytk) {
+  for (const t of ya.ticks) {
     body += `<line x1="${n(g.x0)}" y1="${n(yOf(t))}" x2="${n(g.x1)}" y2="${n(yOf(t))}" class="grid"/>`;
-    body += `<text x="${n(g.x0 - 8)}" y="${n(yOf(t) + 4)}" class="tick tick-y">${esc(fy(t))}</text>`;
+    body += `<text x="${n(g.x0 - 8)}" y="${n(yOf(t) + 4)}" class="tick tick-y">${esc(ya.label(t))}</text>`;
   }
-  for (const t of xtk) {
-    body += xTick(xOf(t), g.y1 + 18, fx(t));
+  for (const t of xa.ticks) {
+    if (baseOf(xScale)) body += `<line x1="${n(xOf(t))}" y1="${n(g.y0)}" x2="${n(xOf(t))}" y2="${n(g.y1)}" class="grid"/>`;
+    body += xTick(xOf(t), g.y1 + 18, xa.label(t));
   }
   for (const p of points) {
     const r = p.size ? 5 + Math.sqrt(p.size / maxSize) * 13 : 5;
@@ -779,7 +877,10 @@ export function renderChart(block) {
     case "bars":
       return bars(rowsOf(labels, values, d.tones ?? []), base);
     case "lines":
-      return lines(labels, series, { ...base, height: d.height ?? 240, area: d.area === true, zeroFloor: d.zeroFloor !== false });
+      return lines(labels, series, {
+        ...base, height: d.height ?? 240, area: d.area === true, zeroFloor: d.zeroFloor !== false,
+        x: d.x ?? null, xScale: d.xScale ?? "linear", yScale: d.yScale ?? "linear",
+      });
     case "grouped":
       return grouped(seriesRows(labels, series), names, { ...base, height: d.height ?? 230 });
     case "stacked":
@@ -805,6 +906,7 @@ export function renderChart(block) {
       return scatter(d.points ?? [], {
         title: base.title, note: base.note, height: d.height ?? 280,
         xTitle: d.xTitle ?? "", yTitle: d.yTitle ?? "", fx: fmt, fy: fmt,
+        xScale: d.xScale ?? "linear", yScale: d.yScale ?? "linear",
       });
     case "funnel":
       return funnel(rowsOf(labels, values), base);

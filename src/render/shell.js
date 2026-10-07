@@ -153,6 +153,9 @@ table.full{width:100%}
 .fig-cap{font-size:14px;color:var(--ink);margin-top:8px}
 svg.chart{display:block;overflow:visible;min-width:520px}
 svg.chart.compact{min-width:0}
+svg.chart.diagram{margin:0 auto}
+.fig-row{display:flex;flex-wrap:wrap;gap:8px 28px;align-items:flex-start;justify-content:center;margin:0 0 28px}
+.fig-row>.fig{flex:1 1 220px;min-width:0;margin:0}
 .fig-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 /* Every chart label gets a true-black halo, so one crossing a bar, line or gridline still reads. */
 .chart text{paint-order:stroke fill;stroke:#000;stroke-width:3px;stroke-linejoin:round}
