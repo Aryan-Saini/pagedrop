@@ -145,10 +145,10 @@ const CHART_DEFAULTS = { title: "", note: "", caption: "", format: "compact" };
 
 /** Extra defaults a chart kind adds on top of the envelope. */
 const CHART_EXTRAS = {
-  lines: { area: false, zeroFloor: true },
+  lines: { area: false, zeroFloor: true, refs: [], xTitle: "", yTitle: "", square: false },
   delta: { higherIsBetter: true },
   waterfall: { totals: [] },
-  scatter: { xTitle: "", yTitle: "" },
+  scatter: { xTitle: "", yTitle: "", marks: [] },
 };
 
 const TILE_DEFAULTS = { format: "compact", as: "", delta: "", tone: "", spark: [], meter: null };

@@ -91,7 +91,7 @@ test("enums and scalars name what they expected", () => {
   assert.deepEqual(problems({ tree: { shape: "hexagon", tone: "pink", label: [1] }, dir: "sideways" }), [
     `/dir expected one of down up right left, got "sideways"`,
     `/tree/label expected a string or a number, got an array of 1`,
-    `/tree/shape expected one of box round circle ellipse dot cells, got "hexagon"`,
+    `/tree/shape expected one of box round circle ellipse dot cells text, got "hexagon"`,
     `/tree/tone expected one of good warn bad flat span c1 c2 c3 c4 c5 c6 c7 c8, got "pink"`,
   ]);
   assert.deepEqual(problems({ tree: 7 }), [`/tree expected a shorthand string like "Root(A,B)" or a node object { label, children }, got 7`]);
@@ -196,10 +196,12 @@ test("spine puts a parent on its first child's column", () => {
   assert.ok(at.d.x < at.e.x);
 });
 
-test("leaves layout puts every leaf on the deepest row", () => {
-  const { nodes } = layoutTree(normalize({ tree: "S(NP(the,cat),VP(sat,PP(on,NP(the,mat))))", layout: "leaves" }));
+test("leaves layout puts every leaf on the deepest row and every constituent on its depth's row", () => {
+  const { nodes, pos } = layoutTree(normalize({ tree: "S(NP(the,cat),VP(sat,PP(on,NP(the,mat))))", layout: "leaves" }));
   const leaves = nodes.filter((p) => !p.kids.length);
   assert.equal(new Set(leaves.map((p) => p.y)).size, 1);
+  assert.equal(leaves[0].y, Math.max(...pos));
+  for (const p of nodes.filter((q) => q.kids.length)) assert.equal(p.y, pos[p.depth], p.n.label);
   assert.deepEqual(leaves.map((p) => p.n.label), ["the", "cat", "sat", "on", "the", "mat"]);
   assert.deepEqual([...leaves].sort((a, b) => a.x - b.x).map((p) => p.n.label), ["the", "cat", "sat", "on", "the", "mat"]);
 });
@@ -290,6 +292,22 @@ test("value labels and badges never collide in the scan or the broadcast", () =>
       }
     }
   }
+});
+
+test("text nodes draw no outline, edges stop at the words, and a tone colours the label", () => {
+  const svg = draw({ tree: "S(NP(cat),VP(sat))", shape: "text", layout: "leaves" });
+  assert.equal(count(svg, /<rect |<ellipse |<circle /g), 0);
+  assert.equal(count(svg, /class="node-label"/g), 5);
+  const { nodes } = layoutTree(normalize({ tree: "S(NP(cat),VP(sat))", shape: "text" }));
+  const [s, np] = nodes;
+  // The edge from S to NP starts under S's words and ends above NP's: within a few pixels of each.
+  const m = /<path d="M([\d.-]+),([\d.-]+) L([\d.-]+),([\d.-]+)"/.exec(draw({ tree: "S(NP(cat),VP(sat))", shape: "text" }));
+  assert.ok(m);
+  const [y1, y2] = [Number(m[2]), Number(m[4])];
+  assert.ok(y1 > s.y + 6 && y1 <= s.y + 10, `starts at ${y1}`);
+  assert.ok(y2 < np.y - 6 && y2 >= np.y - 10, `ends at ${y2}`);
+  const toned = draw({ tree: { label: "NP", shape: "text", tone: "c1", children: [{ label: "cat", shape: "text" }] } });
+  assert.match(toned, /style="fill:#3987e5">NP</);
 });
 
 test("cells draw one square per value inside a capsule", () => {

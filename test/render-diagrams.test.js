@@ -133,3 +133,9 @@ test("diagram markup is only cached inside one render() call", async () => {
   block.data.items[0].label = "CHANGED";
   assert.match(renderBlock(block), /CHANGED/);
 });
+
+test("a heatmap with a very long row label keeps positive cell widths", () => {
+  const r = one("chart heatmap", { rows: ["x".repeat(200), "b"], cols: ["c0", "c1"], values: [[1, 2], [3, 4]] });
+  assert.equal(r.errors.length, 0);
+  assert.doesNotMatch(r.html, /width="-/);
+});

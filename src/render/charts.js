@@ -113,6 +113,16 @@ export const FORMATS = {
   ms: (v) => `${group(Math.round(v))} ms`,
 };
 
+/**
+ * A fixed number of decimals, for a heatmap's `decimals`: 0.05 beside 0.60
+ * reads as a column, where a preset would print 0.05 beside 0.6. A value that
+ * rounds to zero prints without a sign.
+ */
+export const fixed = (dp) => (v) => {
+  const s = v.toFixed(dp);
+  return Number(s) === 0 ? (0).toFixed(dp) : s;
+};
+
 /** Resolve a `format` enum value to a formatter; anything unknown falls back to `compact`. */
 export function formatter(format) {
   return FORMATS[format] ?? FORMATS.compact;
@@ -123,6 +133,14 @@ export function formatter(format) {
 const svgOpen = (w, h, label) =>
   `<svg viewBox="-6 -4 ${w + 14} ${h + 8}" width="100%" role="img" aria-label="${esc(label)}" ` +
   `preserveAspectRatio="xMidYMid meet" class="chart">`;
+
+/**
+ * `svgOpen` for a chart narrower than the column (a square plot): drawn at its
+ * own size and centred rather than stretched to the full width.
+ */
+const svgOpenSized = (w, h, label) =>
+  `<svg viewBox="-6 -4 ${w + 14} ${h + 8}" width="100%" style="max-width:${w + 14}px;margin:0 auto" role="img" ` +
+  `aria-label="${esc(label)}" preserveAspectRatio="xMidYMid meet" class="chart compact">`;
 
 /**
  * Estimated width of a chart label: ~6.5px per character at 12px. Margins are
@@ -196,11 +214,11 @@ function gridAndAxis(g, top, tk, fmt) {
 /** A dashed line key: the same 14px stroke, broken into 4px dashes. */
 const dashKey = (color) => `repeating-linear-gradient(90deg,${color} 0 4px,transparent 4px 7px)`;
 
-function legend(names, mark = "bar", colors = names.map((_, i) => seriesColor(i)), dashed = []) {
+function legend(names, mark = "bar", colors = names.map((_, i) => seriesColor(i)), dashed = [], center = false) {
   const key = (i) => mark === "line"
     ? `<span class="stroke" style="background:${dashed[i] ? dashKey(colors[i]) : colors[i]}"></span>`
     : `<span class="swatch" style="background:${colors[i]}"></span>`;
-  return `<div class="legend">` + names.map((nm, i) =>
+  return `<div class="legend"${center ? ` style="justify-content:center"` : ""}>` + names.map((nm, i) =>
     `<span class="key">${key(i)}${esc(nm)}</span>`).join("") + `</div>`;
 }
 
@@ -370,8 +388,23 @@ function linearTicks(lo, hi, zero) {
     return [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
   };
   const step0 = niceStep(hi - lo || Math.abs(hi) || 1);
-  const min = zero ? Math.min(0, lo) : Math.floor(lo / step0) * step0;
+  // A negative low point still rounds down to a whole step, so the ticks read -2 / 0 / 2.
+  const min = zero ? Math.min(0, Math.floor(lo / step0) * step0) : Math.floor(lo / step0) * step0;
   const step = niceStep(hi - min || step0);
+  const count = Math.max(1, Math.ceil((hi - min) / step - 1e-9));
+  const ticks = Array.from({ length: count + 1 }, (_, i) => Number((min + i * step).toPrecision(12)));
+  return { min, top: count * step, ticks, step };
+}
+
+/**
+ * Round ticks fitted to [lo, hi] in one pass, about five steps and no zero
+ * floor: for a cloud of points with no natural origin.
+ * @returns {{ min: number, top: number, ticks: number[], step: number }}
+ */
+function fitTicks(lo, hi) {
+  const raw = (hi - lo || Math.abs(hi) || 1) / 5, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+  const min = Math.floor(lo / step) * step;
   const count = Math.max(1, Math.ceil((hi - min) / step - 1e-9));
   const ticks = Array.from({ length: count + 1 }, (_, i) => Number((min + i * step).toPrecision(12)));
   return { min, top: count * step, ticks, step };
@@ -396,6 +429,104 @@ function numericAxis(values, scale, p0, p1, fmt, zero) {
   return { at: (v) => p0 + ((v - t.min) / t.top) * (p1 - p0), ticks: t.ticks, label };
 }
 
+/** Reference lines are the flat tone, so a ref never reads as a series. */
+const REF_INK = TONE_INK.flat;
+
+/** Does the segment (ax, ay) to (bx, by) touch the box [x0, y0, x1, y1]? Liang-Barsky clipping. */
+function segHits(box, ax, ay, bx, by) {
+  let t0 = 0, t1 = 1;
+  const dx = bx - ax, dy = by - ay;
+  for (const [p, q] of [[-dx, ax - box[0]], [dx, box[2] - ax], [-dy, ay - box[1]], [dy, box[3] - ay]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const r = q / p;
+    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; } else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return true;
+}
+
+/**
+ * The first label candidate that touches no segment and no placed label, else
+ * the one touching fewest. A candidate outside [minX, maxX] always loses.
+ * @param {{ x: number, y: number, anchor: string, box: number[] }[]} cands
+ * @param {number[][]} segs obstacles as [ax, ay, bx, by]
+ * @param {number[][]} boxes labels placed so far; the winner is appended
+ */
+function placeLabel(cands, segs, boxes, minX, maxX) {
+  let best = cands[0], bestHits = Infinity;
+  for (const c of cands) {
+    const [x0, y0, x1, y1] = c.box;
+    let hits = x0 < minX || x1 > maxX ? 1e9 : 0;
+    for (const s of segs) if (segHits(c.box, s[0], s[1], s[2], s[3])) hits++;
+    for (const b of boxes) if (b[0] < x1 && x0 < b[2] && b[1] < y1 && y0 < b[3]) hits++;
+    if (hits < bestHits) { best = c; bestHits = hits; if (!hits) break; }
+  }
+  boxes.push(best.box);
+  return best;
+}
+
+/** A label candidate whose text starts (or ends, for `end`) at x with its baseline at y. */
+const cand = (x, y, anchor, s) => {
+  const w = textW(s);
+  return { x, y, anchor, box: anchor === "end" ? [x - w, y - 11, x, y + 3] : [x, y - 11, x + w, y + 3] };
+};
+
+/**
+ * Dashed reference lines over a plot, split into the lines (drawn under the
+ * series) and their labels (drawn on top, placed clear of `segs`).
+ * `xAt` is null on a categorical x axis, where only y refs exist; `dom` is the
+ * plotted range of each axis, which the diagonal spans.
+ *
+ * @param {(string | { x?: number, y?: number, label?: string })[]} refs
+ * @param {{ x0: number, x1: number, y0: number, y1: number }} g
+ * @param {((v: number) => number) | null} xAt
+ * @param {(v: number) => number} yAt
+ * @param {{ x: number[] | null, y: number[] }} dom
+ * @param {number[][]} segs the series, as pixel segments
+ */
+function refLines(refs, g, xAt, yAt, dom, segs) {
+  const dash = ([x1, y1, x2, y2]) =>
+    `<line x1="${n(x1)}" y1="${n(y1)}" x2="${n(x2)}" y2="${n(y2)}" stroke="${REF_INK}" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+  /** @type {{ seg: number[], ref: { x?: number, y?: number, label?: string } | null }[]} */
+  const drawn = [];
+  for (const r of refs) {
+    if (r === "diagonal") {
+      if (!xAt || !dom.x) continue;
+      const t0 = Math.max(dom.x[0], dom.y[0]), t1 = Math.min(dom.x[1], dom.y[1]);
+      if (t1 > t0) drawn.push({ seg: [xAt(t0), yAt(t0), xAt(t1), yAt(t1)], ref: null });
+    } else if (typeof r === "object" && r.y !== undefined) {
+      drawn.push({ seg: [g.x0, yAt(r.y), g.x1, yAt(r.y)], ref: r });
+    } else if (typeof r === "object" && r.x !== undefined && xAt) {
+      drawn.push({ seg: [xAt(r.x), g.y0, xAt(r.x), g.y1], ref: r });
+    }
+  }
+  const obstacles = segs.concat(drawn.map((d) => d.seg));
+  /** @type {number[][]} */ const boxes = [];
+  let labels = "";
+  for (const { seg, ref } of drawn) {
+    if (!ref?.label) continue;
+    const s = ref.label;
+    const cands = ref.y !== undefined
+      ? [cand(g.x1 - 4, seg[1] - 5, "end", s), cand(g.x0 + 6, seg[1] - 5, "start", s),
+        cand(g.x1 - 4, seg[1] + 15, "end", s), cand(g.x0 + 6, seg[1] + 15, "start", s)]
+      : [cand(seg[0] + 5, g.y0 + 12, "start", s), cand(seg[0] + 5, g.y1 - 6, "start", s),
+        cand(seg[0] - 5, g.y0 + 12, "end", s), cand(seg[0] - 5, g.y1 - 6, "end", s)];
+    const c = placeLabel(cands, obstacles, boxes, g.x0 - 2, g.x1 + 2);
+    labels += `<text x="${n(c.x)}" y="${n(c.y)}" class="tick" text-anchor="${c.anchor}">${esc(s)}</text>`;
+  }
+  return { lines: drawn.map((d) => dash(d.seg)).join(""), labels };
+}
+
+/** A rotated y-axis title at the left edge and a centred x-axis title at `xY`. */
+function axisTitles(g, xY, xTitle, yTitle) {
+  let out = "";
+  if (xTitle) out += xTick((g.x0 + g.x1) / 2, xY, xTitle);
+  if (yTitle) out += `<text transform="translate(14,${n((g.y0 + g.y1) / 2)}) rotate(-90)" class="tick" text-anchor="middle">${esc(yTitle)}</text>`;
+  return out;
+}
+
+/** Left edge of the plot: room for the tick labels, plus a rotated title when there is one. */
+const plotX0 = (tickLabels, yTitle) => (yTitle ? Math.max(58, Math.ceil(widest(tickLabels) + 32)) : axisX0(tickLabels));
+
 /**
  * Lines over a shared x. series: [{ name, values: [..], tone?, dashed? }], x labels in `labels`.
  * The last point of each line is dotted and end-labelled. A series `tone`
@@ -405,6 +536,15 @@ function numericAxis(values, scale, p0, p1, fmt, zero) {
  *
  * `x` swaps the evenly spaced categories for numeric positions; `xScale` and
  * `yScale` put either axis on a log2 or log10 scale (a log x needs `x`).
+ *
+ * Series may instead carry `points: [[x, y], ...]`, each on its own x (ROC
+ * curves, train and val logged at different epochs). Those share one numeric
+ * x axis, are named in a legend rather than end-labelled, and fit the y axis
+ * to the data's own precision.
+ *
+ * `refs` adds dashed reference lines (`"diagonal"`, `{ y }`, `{ x }`, each
+ * optionally labelled), `xTitle` / `yTitle` name the axes, and `square` makes
+ * the plot as wide as it is tall.
  */
 export function lines(labels, series, {
   title = "",
@@ -416,14 +556,23 @@ export function lines(labels, series, {
   x = /** @type {number[] | null} */ (null),
   xScale = "linear",
   yScale = "linear",
+  refs = /** @type {(string | { x?: number, y?: number, label?: string })[]} */ ([]),
+  xTitle = "",
+  yTitle = "",
+  square = false,
 } = {}) {
-  const W = 720, H = height;
-  const all = series.flatMap((s) => s.values);
-  const g = { x0: 0, x1: 0, y0: 16, y1: H - 34 };
+  const xy = series.length > 0 && series.every((s) => Array.isArray(s.points));
+  const refVals = (axis) => refs.flatMap((r) => (typeof r === "object" && Number.isFinite(r[axis]) ? [r[axis]] : []));
+  const xRefs = refVals("x"), yRefs = refVals("y");
+  const H = height + (xTitle ? 18 : 0);
+  /** @type {number[]} */ const all = [];
+  for (const s of series) for (const v of xy ? s.points.map((p) => p[1]) : s.values) all.push(v);
+  for (const v of yRefs) all.push(v);
+  const g = { x0: 0, x1: 0, y0: 16, y1: height - 34 };
   /** @type {{ v: number, label: string }[]} */ let yTicks;
   /** @type {(v: number) => number} */ let yOf;
-  if (baseOf(yScale)) {
-    const axis = numericAxis(all, yScale, g.y1, g.y0, format, false);
+  if (baseOf(yScale) || xy) {
+    const axis = numericAxis(all, yScale, g.y1, g.y0, format, zeroFloor);
     yTicks = axis.ticks.map((v) => ({ v, label: axis.label(v) }));
     yOf = axis.at;
   } else {
@@ -437,16 +586,24 @@ export function lines(labels, series, {
     yOf = (v) => g.y1 - ((v - min) / top) * (g.y1 - g.y0);
   }
   // End labels sit 10px right of the last point, so the plot stops short by their width.
-  const endW = widest(series.map((s) => format(s.values.at(-1) ?? 0)));
-  g.x0 = axisX0(yTicks.map((t) => t.label));
-  g.x1 = W - Math.ceil(endW + 14);
+  const right = xy ? 16 : Math.ceil(widest(series.map((s) => format(s.values.at(-1) ?? 0))) + 14);
+  g.x0 = plotX0(yTicks.map((t) => t.label), yTitle);
+  let W = 720;
+  if (square) {
+    g.x1 = g.x0 + (g.y1 - g.y0);
+    W = g.x1 + right;
+  } else g.x1 = W - right;
   const colors = series.map((s, si) => TONE_INK[s.tone] ?? seriesColor(si));
   const count = x ? x.length : labels.length;
   /** @type {(i: number) => number} */ let xOf = (i) => g.x0 + (i / Math.max(1, count - 1)) * (g.x1 - g.x0);
   /** @type {{ at: (v: number) => number, ticks: number[], label: (v: number) => string } | null} */
   let xAxis = null;
-  if (x) {
-    xAxis = numericAxis(x, xScale, g.x0, g.x1, (v) => compact(v), true);
+  if (xy) {
+    /** @type {number[]} */ const xs = [];
+    for (const s of series) for (const p of s.points) xs.push(p[0]);
+    xAxis = numericAxis(xs.concat(xRefs), xScale, g.x0, g.x1, (v) => compact(v), true);
+  } else if (x) {
+    xAxis = numericAxis(xRefs.length ? x.concat(xRefs) : x, xScale, g.x0, g.x1, (v) => compact(v), true);
     const at = xAxis.at;
     xOf = (i) => at(x[i]);
   }
@@ -463,14 +620,34 @@ export function lines(labels, series, {
       body += `<line x1="${n(xAxis.at(t))}" y1="${n(g.y0)}" x2="${n(xAxis.at(t))}" y2="${n(g.y1)}" class="grid"/>`;
     }
   }
+  /** Each series as [x, y] pixels, for drawing and for keeping ref labels off the lines. */
+  const pixels = series.map((s) => xy
+    ? s.points.map((p) => [/** @type {NonNullable<typeof xAxis>} */ (xAxis).at(p[0]), yOf(p[1])])
+    : s.values.map((v, i) => [xOf(i), yOf(v)]));
+  let refLabels = "";
+  if (refs.length) {
+    /** @type {number[][]} */ const segs = [];
+    for (const ps of pixels) for (let i = 1; i < ps.length; i++) segs.push([ps[i - 1][0], ps[i - 1][1], ps[i][0], ps[i][1]]);
+    const dom = { x: xAxis ? [xAxis.ticks[0], xAxis.ticks[xAxis.ticks.length - 1]] : null, y: [yTicks[0].v, yTicks[yTicks.length - 1].v] };
+    const r = refLines(refs, g, xAxis ? xAxis.at : null, yOf, dom, segs);
+    body += r.lines;
+    refLabels = r.labels;
+  }
   series.forEach((s, si) => {
     const color = colors[si];
-    const d = s.values.map((v, i) => `${i ? "L" : "M"}${n(xOf(i))},${n(yOf(v))}`).join(" ");
+    const ps = pixels[si];
+    const d = ps.map(([px, py], i) => `${i ? "L" : "M"}${n(px)},${n(py)}`).join(" ");
     if (area && series.length === 1) {
-      body += `<path d="${d} L${n(xOf(s.values.length - 1))},${n(g.y1)} L${n(xOf(0))},${n(g.y1)} Z" fill="${color}" opacity="0.10"/>`;
+      body += `<path d="${d} L${n(ps[ps.length - 1][0])},${n(g.y1)} L${n(ps[0][0])},${n(g.y1)} Z" fill="${color}" opacity="0.10"/>`;
     }
-    body += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"` +
-      `${s.dashed ? ` stroke-dasharray="6 5"` : ""}/>`;
+    const stroke = `fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"` +
+      `${s.dashed ? ` stroke-dasharray="6 5"` : ""}`;
+    if (xy) {
+      // A long series would carry one hover target per point; the line names itself instead.
+      body += `<path d="${d}" ${stroke}><title>${esc(s.name)}</title></path>`;
+      return;
+    }
+    body += `<path d="${d}" ${stroke}/>`;
     s.values.forEach((v, i) => {
       body += `<circle cx="${n(xOf(i))}" cy="${n(yOf(v))}" r="9" fill="transparent">` +
         `<title>${esc(s.name)} · ${esc(pointLabel(i))}: ${esc(format(v))}</title></circle>`;
@@ -480,6 +657,7 @@ export function lines(labels, series, {
     body += `<text x="${n(xOf(li) + 10)}" y="${n(yOf(s.values[li]) + 4)}" class="val val-left"${inkStyle(TONE_INK[s.tone])}>` +
       `${esc(format(s.values[li]))}</text>`;
   });
+  body += refLabels;
   if (xAxis) {
     for (const t of xAxis.ticks) body += xTick(xAxis.at(t), g.y1 + 18, xAxis.label(t));
   } else {
@@ -489,11 +667,12 @@ export function lines(labels, series, {
     });
   }
   body += `<line x1="${n(g.x0)}" y1="${n(g.y1)}" x2="${n(g.x1)}" y2="${n(g.y1)}" class="axis"/>`;
+  body += axisTitles(g, g.y1 + 36, xTitle, yTitle);
   return frame(
-    svgOpen(W, H, title || "line chart") + body + "</svg>",
+    (square ? svgOpenSized : svgOpen)(W, H, title || "line chart") + body + "</svg>",
     title,
     note,
-    series.length > 1 ? legend(series.map((s) => s.name), "line", colors, series.map((s) => s.dashed === true)) : "",
+    xy || series.length > 1 ? legend(series.map((s) => s.name), "line", colors, series.map((s) => s.dashed === true), square) : "",
   );
 }
 
@@ -584,12 +763,17 @@ export function whisker(rows, { title = "", note = "", format = (v) => compact(v
   return frame(svgOpen(W, H, title || "range chart") + body + "</svg>", title, note);
 }
 
-/** Heat map. rowLabels: y categories, colLabels: x categories, values[y][x]. */
-export function heatmap(rowLabels, colLabels, values, { title = "", note = "", format = (v) => String(v) } = {}) {
-  const cell = 34, gap = 2;
-  const labelW = Math.max(96, Math.ceil(widest(rowLabels) + 14));
-  const W = 720;
-  const cw = Math.min(cell, (W - labelW - 12) / colLabels.length - gap);
+/**
+ * Heat map. rowLabels: y categories, colLabels: x categories, values[y][x].
+ * `emphasis: "diagonal"` outlines the cells where row = col (the correct
+ * predictions of a confusion matrix), inset so the value stays clear of it.
+ */
+export function heatmap(rowLabels, colLabels, values, { title = "", note = "", format = (v) => String(v), emphasis = "" } = {}) {
+  const cell = 34, gap = 2, W = 720;
+  // Row labels may take at most 45% of the width, and a cell never goes below 6px,
+  // so a very long label cannot push the cell width negative.
+  const labelW = Math.min(Math.round(W * 0.45), Math.max(96, Math.ceil(widest(rowLabels) + 14)));
+  const cw = Math.max(6, Math.min(cell, (W - labelW - 12) / colLabels.length - gap));
   const H = rowLabels.length * (cell + gap) + 34;
   const max = Math.max(...values.flat());
   let body = "";
@@ -606,6 +790,10 @@ export function heatmap(rowLabels, colLabels, values, { title = "", note = "", f
       const fill = mix(SERIES[0], 0.12 + t * 0.88);
       body += `<rect x="${n(labelW + x * (cw + gap))}" y="${n(ty)}" width="${n(cw)}" height="${cell}" rx="3" fill="${fill}">` +
         `<title>${esc(r)} · ${esc(c)}: ${esc(format(v))}</title></rect>`;
+      if (emphasis === "diagonal" && x === y) {
+        body += `<rect x="${n(labelW + x * (cw + gap) + 1)}" y="${n(ty + 1)}" width="${n(Math.max(0, cw - 2))}" height="${cell - 2}" ` +
+          `rx="2.5" fill="none" stroke="${GOOD}" stroke-width="2"/>`;
+      }
       // Ink by the cell's luminance. Dark ink swaps the black halo for the cell
       // colour, which would otherwise thicken the glyphs.
       const ink = inkOn(fill);
@@ -673,11 +861,17 @@ export function waterfall(rows, {
 /**
  * Scatter, optionally sized. points: [{ x, y, size?, label? }].
  * Two numeric axes; the size channel is the bubble area.
+ *
+ * `series: [{ name, points: [[x, y], ...], tone? }]` replaces `points` with
+ * coloured groups and a legend. `marks: [{ at: [x, y], label? }]` draws a
+ * labelled cross at each point (a k-means centroid).
  */
 export function scatter(points, {
   title = "", note = "", height = 280, xTitle = "", yTitle = "",
   fx = (v) => compact(v), fy = (v) => compact(v), color = SERIES[0],
   xScale = "linear", yScale = "linear",
+  series = /** @type {{ name: string, points: [number, number][], tone?: string }[]} */ ([]),
+  marks = /** @type {{ at: [number, number], label?: string }[]} */ ([]),
 } = {}) {
   const W = 720, H = height;
   const g = { x0: 0, x1: W - 16, y0: 16, y1: H - 42 };
@@ -692,8 +886,22 @@ export function scatter(points, {
     const { top, ticks: tk } = ticks(extent(vs)[1]);
     return { ticks: tk, frac: (v) => v / top, label: f };
   };
-  const xa = axisOf(points.map((p) => p.x), xScale, fx);
-  const ya = axisOf(points.map((p) => p.y), yScale, fy);
+  /** @type {number[]} */ const xv = [], yv = [];
+  if (series.length) {
+    for (const s of series) for (const p of s.points) { xv.push(p[0]); yv.push(p[1]); }
+  } else {
+    for (const p of points) { xv.push(p.x); yv.push(p.y); }
+  }
+  for (const m of marks) { xv.push(m.at[0]); yv.push(m.at[1]); }
+  // Groups (an embedding, a feature space) have no natural zero, so their axes fit the cloud.
+  /** @param {number[]} vs @param {string} scale @param {(v: number) => string} f */
+  const groupAxis = (vs, scale, f) => {
+    if (baseOf(scale)) return axisOf(vs, scale, f);
+    const t = fitTicks(...extent(vs));
+    return { ticks: t.ticks, frac: (v) => (v - t.min) / t.top, label: t.step < 0.01 ? (v) => String(Number(v.toPrecision(6))) : f };
+  };
+  const xa = (series.length ? groupAxis : axisOf)(xv, xScale, fx);
+  const ya = (series.length ? groupAxis : axisOf)(yv, yScale, fy);
   // A y title stands at x = 14, rotated; the tick labels keep clear of it.
   g.x0 = Math.max(58, Math.ceil(widest(ya.ticks.map(ya.label)) + 10 + (yTitle ? 22 : 0)));
   const maxSize = Math.max(...points.map((p) => p.size ?? 1));
@@ -709,16 +917,37 @@ export function scatter(points, {
     if (baseOf(xScale)) body += `<line x1="${n(xOf(t))}" y1="${n(g.y0)}" x2="${n(xOf(t))}" y2="${n(g.y1)}" class="grid"/>`;
     body += xTick(xOf(t), g.y1 + 18, xa.label(t));
   }
-  for (const p of points) {
+  const colors = series.map((s, i) => TONE_INK[s.tone] ?? seriesColor(i));
+  series.forEach((s, i) => {
+    // One title per group: a hover target per dot would cost more than the dots.
+    body += `<g fill="${colors[i]}" fill-opacity="0.6" stroke="${colors[i]}" stroke-width="1.2"><title>${esc(s.name)}</title>`;
+    for (const [x, y] of s.points) body += `<circle cx="${n(xOf(x))}" cy="${n(yOf(y))}" r="4.5"/>`;
+    body += `</g>`;
+  });
+  for (const p of series.length ? [] : points) {
     const r = p.size ? 5 + Math.sqrt(p.size / maxSize) * 13 : 5;
     body += `<circle cx="${n(xOf(p.x))}" cy="${n(yOf(p.y))}" r="${n(r)}" fill="${color}" fill-opacity="0.55" ` +
       `stroke="${color}" stroke-width="1.5">` +
       `<title>${esc(p.label ?? "")}${p.label ? " · " : ""}${esc(fx(p.x))}, ${esc(fy(p.y))}</title></circle>`;
   }
+  for (const m of marks) {
+    const cx = xOf(m.at[0]), cy = yOf(m.at[1]);
+    const d = `M${n(cx - 6)},${n(cy - 6)} L${n(cx + 6)},${n(cy + 6)} M${n(cx + 6)},${n(cy - 6)} L${n(cx - 6)},${n(cy + 6)}`;
+    // A white cross on a black outline reads over any group colour.
+    body += `<path d="${d}" stroke="#000" stroke-width="6" stroke-linecap="round"/>` +
+      `<path d="${d}" stroke="#fff" stroke-width="2.5" stroke-linecap="round">` +
+      `<title>${esc(m.label ?? "")}${m.label ? " · " : ""}${esc(fx(m.at[0]))}, ${esc(fy(m.at[1]))}</title></path>`;
+    if (m.label) {
+      const right = cx + 10 + textW(m.label) <= W + 6;
+      body += `<text x="${n(right ? cx + 10 : cx - 10)}" y="${n(cy - 8 < 10 ? cy + 19 : cy - 8)}" class="tick" ` +
+        `text-anchor="${right ? "start" : "end"}">${esc(m.label)}</text>`;
+    }
+  }
   body += `<line x1="${n(g.x0)}" y1="${n(g.y1)}" x2="${n(g.x1)}" y2="${n(g.y1)}" class="axis"/>`;
   if (xTitle) body += xTick((g.x0 + g.x1) / 2, H - 6, xTitle);
   if (yTitle) body += `<text transform="translate(14,${n((g.y0 + g.y1) / 2)}) rotate(-90)" class="tick" text-anchor="middle">${esc(yTitle)}</text>`;
-  return frame(svgOpen(W, H, title || "scatter") + body + "</svg>", title, note);
+  return frame(svgOpen(W, H, title || "scatter") + body + "</svg>", title, note,
+    series.length ? legend(series.map((s) => s.name), "bar", colors) : "");
 }
 
 /**
@@ -902,8 +1131,9 @@ export function renderChart(block) {
       return bars(rowsOf(labels, values, d.tones ?? []), base);
     case "lines":
       return lines(labels, series, {
-        ...base, height: d.height ?? 240, area: d.area === true, zeroFloor: d.zeroFloor !== false,
+        ...base, height: d.height ?? (d.square === true ? 320 : 240), area: d.area === true, zeroFloor: d.zeroFloor !== false,
         x: d.x ?? null, xScale: d.xScale ?? "linear", yScale: d.yScale ?? "linear",
+        refs: d.refs ?? [], xTitle: d.xTitle ?? "", yTitle: d.yTitle ?? "", square: d.square === true,
       });
     case "grouped":
       return grouped(seriesRows(labels, series), names, { ...base, height: d.height ?? 230 });
@@ -919,7 +1149,9 @@ export function renderChart(block) {
     case "whisker":
       return whisker(labels.map((label, i) => ({ label, mid: d.mid?.[i] ?? 0, lo: d.lo?.[i] ?? 0, hi: d.hi?.[i] ?? 0 })), base);
     case "heatmap":
-      return heatmap(d.rows ?? [], d.cols ?? [], d.values ?? [], base);
+      return heatmap(d.rows ?? [], d.cols ?? [], d.values ?? [], {
+        ...base, format: Number.isInteger(d.decimals) ? fixed(d.decimals) : fmt, emphasis: d.emphasis ?? "",
+      });
     case "waterfall": {
       const totals = new Set(d.totals ?? []);
       return waterfall(labels.map((label, i) => ({ label, value: values[i], total: totals.has(i) || undefined })), {
@@ -931,6 +1163,7 @@ export function renderChart(block) {
         title: base.title, note: base.note, height: d.height ?? 280,
         xTitle: d.xTitle ?? "", yTitle: d.yTitle ?? "", fx: fmt, fy: fmt,
         xScale: d.xScale ?? "linear", yScale: d.yScale ?? "linear",
+        series: d.series ?? [], marks: d.marks ?? [],
       });
     case "funnel":
       return funnel(rowsOf(labels, values), base);

@@ -134,10 +134,10 @@ Order is whatever the steps say. Here the master broadcasts first and the replie
      {"label":"virginica","shape":"round","tone":"c7","edge":"no","below":"45 / 46"}]}]}}
 ```
 
-`layout: "leaves"` puts every leaf on the deepest row, so the words of a sentence line up under their constituents.
+`layout: "leaves"` puts every leaf on the deepest row, so the words of a sentence line up under their constituents. `shape: "text"` drops the outlines, as parse trees are usually drawn.
 
 ```tree
-{"title":"Constituency parse","note":"The words keep sentence order on the bottom row","layout":"leaves","shape":"round",
+{"title":"Constituency parse","note":"The words keep sentence order on the bottom row","layout":"leaves","shape":"text",
  "tree":"S(NP(Det(the),N(cat)),VP(V(sat),PP(P(on),NP(Det(the),Adj(red),N(mat)))))"}
 ```
 

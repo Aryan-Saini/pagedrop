@@ -415,3 +415,23 @@ test("normalize leaves the whole gallery renderable without undefined", () => {
     assert.ok(FORMATS.includes(block.data.format), `${block.kind} format ${block.data.format}`);
   }
 });
+
+test("normalize fills the ML chart keys, and point series pass through untouched", () => {
+  const { doc: parsed } = parseMarkdown(doc(
+    '```chart lines\n{"series":[{"name":"ROC","points":[[0,0],[1,1]]}]}\n```\n\n' +
+    '```chart scatter\n{"series":[{"name":"a","points":[[1,2]]}]}\n```',
+  ), {});
+  assert.deepEqual(validateDoc(parsed), []);
+  const out = normalize(parsed);
+  const lines = out.blocks.find((b) => b.kind === "lines").data;
+  assert.deepEqual([lines.refs, lines.xTitle, lines.yTitle, lines.square], [[], "", "", false]);
+  assert.deepEqual(lines.series[0], { name: "ROC", points: [[0, 0], [1, 1]], tone: "" });
+  const scatter = out.blocks.find((b) => b.kind === "scatter").data;
+  assert.deepEqual(scatter.marks, []);
+  assert.equal(scatter.points, undefined);
+});
+
+test("a ref the axis cannot carry is reported with its file and line", () => {
+  one('```chart lines\n{"labels":["a","b"],"refs":["diagonal"],"series":[{"name":"s","values":[1,2]}]}\n```',
+    "plan.md:7 chart lines: /refs/0 needs a numeric x axis; give x or series points");
+});
