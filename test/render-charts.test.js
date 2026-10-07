@@ -500,7 +500,7 @@ test("ML additions are rejected with a pointer when malformed", () => {
     ["lines", { series: [{ name: "s", points: pts(1001) }] }, "/series/0/points expected at most 1000 points, got 1001"],
     ["lines", { series: [{ name: "s", points: [[0, 1], [1e16, 2]] }] }, "/series/0/points/1/0 expected a value within ±1e15, got 10000000000000000; rescale the units"],
     ["lines", { yScale: "log10", series: [{ name: "s", points: [[0, 1], [1, 0]] }] }, "/series/0/points/1/1 expected a value > 0 on the log10 y axis, got 0"],
-    ["lines", { series: [{ name: "s", points: [[0, 1], [1e-12, 1]] }] }, "/series expected the x values to span or reach at least 1e-9, got 1e-12; rescale the units"],
+    ["lines", { series: [{ name: "s", points: [[0, 1], [1e-320, 1]] }] }, "/series expected the x values to span or reach at least 1e-300, got 1e-320; rescale the units"],
     ["lines", { labels: ["a", "b"], refs: ["diagonal"], series: [{ name: "s", values: [1, 2] }] }, "/refs/0 needs a numeric x axis; give x or series points"],
     ["lines", { labels: ["a", "b"], refs: [{ x: 1 }], series: [{ name: "s", values: [1, 2] }] }, "/refs/0/x needs a numeric x axis; give x or series points"],
     ["lines", { yScale: "log10", refs: ["diagonal"], series: [{ name: "s", points: [[1, 1], [2, 2]] }] }, '/refs/0 expected the same xScale and yScale for the diagonal, got "linear" and "log10"'],
@@ -534,13 +534,32 @@ test("malformed ML bodies are diagnostics, never throws", () => {
   }
 });
 
+test("a negative y reference pulls the baseline below zero, and wide heatmap headers sit over their cells", () => {
+  const neg = chart("lines", { labels: ["a", "b"], series: [{ name: "s", values: [1, 2] }], refs: [{ y: -1, label: "threshold" }] });
+  const y = Number(/y="([\d.]+)"[^>]*>threshold</.exec(neg)?.[1]);
+  const top = Number(/viewBox="[-\d.]+ [-\d.]+ [\d.]+ ([\d.]+)"/.exec(neg)?.[1]);
+  assert.ok(y > 0 && y < top, `threshold label at y=${y} must sit inside a ${top} tall chart`);
+
+  const hm = chart("heatmap", { rows: ["r"], cols: Array.from({ length: 20 }, (_, i) => "c" + i), values: [Array(20).fill(0.123456)], decimals: 6 });
+  const xs = [...hm.matchAll(/<text x="([\d.]+)"[^>]*class="tick tick-x">c/g)].map((m) => Number(m[1]));
+  assert.equal(new Set(xs).size, 20);
+});
+
 test("a constant axis too small to tick is rejected, not drawn with NaN", () => {
-  for (const v of [3e-300, 1e-320, 5e-324]) {
-    assert.match(chartErrs("lines", { zeroFloor: false, series: [{ name: "s", points: [[0, v], [1, v]] }] })[0], /span or reach at least 1e-9/);
-    assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[v, v]] }] })[0], /span or reach at least 1e-9/);
+  for (const v of [1e-320, 5e-324]) {
+    assert.match(chartErrs("lines", { zeroFloor: false, series: [{ name: "s", points: [[0, v], [1, v]] }] })[0], /span or reach at least 1e-300/);
+    assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[v, v]] }] })[0], /span or reach at least 1e-300/);
+  }
+  // Above the floor tiny data renders: constant 1e-10, and a 2e-22 span the old tick loop could not finish.
+  for (const values of [[1e-10, 1e-10], [0.000001, 0.0000010000000000000002]]) {
+    for (const zeroFloor of [true, false]) {
+      const body = { labels: ["a", "b"], series: [{ name: "s", values }], zeroFloor };
+      assert.deepEqual(chartErrs("lines", body), []);
+      assert.doesNotMatch(chart("lines", body), /NaN|Infinity/);
+    }
   }
   // Marks count toward the plotted domain, and beside flat points they must sit on the 0-based axes.
-  assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[0, 0]] }], marks: [{ at: [5e-324, 5e-324] }] })[0], /reach at least 1e-9/);
+  assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[0, 0]] }], marks: [{ at: [5e-324, 5e-324] }] })[0], /reach at least 1e-300/);
   assert.match(chartErrs("scatter", { points: [{ x: 1, y: 1 }], marks: [{ at: [-10, -10] }] })[0], /^\/marks\/0\/at expected coordinates of 0 or more/);
 });
 

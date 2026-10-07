@@ -76,10 +76,13 @@ export function ticks(max, count = 4) {
   const raw = max / count;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
-  const top = Math.ceil(max / step) * step;
+  // A max too small for its tenth to be a normal double has no usable step: plot 0..max as is.
+  if (!(step > 0)) return { top: max, ticks: [0, max] };
+  // Count the steps rather than accumulating them: a fixed tolerance would dwarf a tiny step.
+  const k = Math.max(1, Math.round(Math.ceil(max / step - 1e-9)));
   const out = [];
-  for (let v = 0; v <= top + 1e-9; v += step) out.push(n(v));
-  return { top, ticks: out };
+  for (let i = 0; i <= k; i++) out.push(n(i * step));
+  return { top: k * step, ticks: out };
 }
 
 /** Compact number formatting: 1284 -> 1.3k, 4200000 -> 4.2M. */
@@ -168,7 +171,7 @@ const fitX = (x, s, w = 720) => {
 const axisX0 = (labels, min = 52) => Math.max(min, Math.ceil(widest(labels) + 10));
 
 /** A category label under the x axis, kept inside the viewBox. */
-const xTick = (x, y, s) => `<text x="${n(fitX(x, s))}" y="${n(y)}" class="tick tick-x">${esc(s)}</text>`;
+const xTick = (x, y, s, w = 720) => `<text x="${n(fitX(x, s, w))}" y="${n(y)}" class="tick tick-x">${esc(s)}</text>`;
 
 /**
  * Inline fill for a label that carries meaning (a delta, a drop, a toned end
@@ -585,7 +588,8 @@ export function lines(labels, series, {
     // With no zero floor, drop the baseline to a round number below the low point
     // so the axis reads 250 / 300 / 350 rather than 284 / 334 / 384.
     const step0 = ticks(max - lo).ticks[1] || 1;
-    const min = zeroFloor ? 0 : Math.floor(lo / step0) * step0;
+    // A zero floor holds only while nothing (a value or a reference) dips below zero.
+    const min = zeroFloor && lo >= 0 ? 0 : Math.floor(lo / step0) * step0;
     const { top, ticks: tk } = ticks(max - min);
     yTicks = tk.map((t) => ({ v: t + min, label: format(t + min) }));
     yOf = (v) => g.y1 - ((v - min) / top) * (g.y1 - g.y0);
@@ -786,7 +790,7 @@ export function heatmap(rowLabels, colLabels, values, { title = "", note = "", f
   const max = Math.max(...values.flat());
   let body = "";
   colLabels.forEach((c, x) => {
-    body += xTick(labelW + x * (cw + gap) + cw / 2, 14, c);
+    body += xTick(labelW + x * (cw + gap) + cw / 2, 14, c, W);
   });
   rowLabels.forEach((r, y) => {
     const ty = 24 + y * (cell + gap);

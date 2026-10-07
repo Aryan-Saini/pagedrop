@@ -221,10 +221,10 @@ function spanOk(ctx, values, scale, zero, axis, at) {
   if (isLog(scale) || values.length === 0) return;
   let lo = zero ? 0 : Infinity, hi = zero ? 0 : -Infinity;
   for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
-  // A constant axis is ticked by its magnitude instead of its span, so that has the same floor:
-  // below it the tick step underflows and the plot would carry NaN.
+  // A constant axis is ticked by its magnitude instead of its span. Below 1e-300 a tick
+  // step is no longer a normal double and the plot would carry NaN; anything above renders.
   const reach = hi - lo || Math.max(Math.abs(lo), Math.abs(hi));
-  if (reach > 0 && reach < 1e-9) ctx.at(at, `expected the ${axis} values to span or reach at least 1e-9, got ${reach}; rescale the units`);
+  if (reach > 0 && reach < 1e-300) ctx.at(at, `expected the ${axis} values to span or reach at least 1e-300, got ${reach}; rescale the units`);
 }
 
 /** True when a lines body draws `points` series rather than `values` over shared labels or x. */
@@ -415,7 +415,8 @@ const KINDS = {
     else {
       linesBody(ctx, body);
       if (Array.isArray(body.series)) {
-        const vals = body.series.flatMap((s) => (isObject(s) && Array.isArray(s.values) ? s.values : []))
+        const yRefs = Array.isArray(body.refs) ? body.refs.filter(isObject).map((r) => r.y) : [];
+        const vals = [...body.series.flatMap((s) => (isObject(s) && Array.isArray(s.values) ? s.values : [])), ...yRefs]
           .filter((v) => typeof v === "number" && Number.isFinite(v));
         spanOk(ctx, vals, body.yScale, body.zeroFloor !== false, "y", "/series");
       }
