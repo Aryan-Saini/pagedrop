@@ -24,6 +24,10 @@ import * as er from "./er.js";
 import * as sortnet from "./sortnet.js";
 import * as topology from "./topology.js";
 import * as sankey from "./sankey.js";
+import * as tokens from "./tokens.js";
+import * as nn from "./nn.js";
+import * as tensors from "./tensors.js";
+import * as trellis from "./trellis.js";
 
 /**
  * @typedef {{
@@ -35,7 +39,7 @@ import * as sankey from "./sankey.js";
 
 /** Fence name -> module. Insertion order is the order the docs list them in. */
 export const DIAGRAMS = /** @type {Record<string, DiagramModule>} */ ({
-  tree, graph, structure, lanes, pipeline, layers, er, sortnet, topology, sankey,
+  tree, graph, structure, lanes, pipeline, layers, er, sortnet, topology, sankey, tokens, nn, tensors, trellis,
 });
 
 export { DIAGRAM_FENCES } from "./names.js";
