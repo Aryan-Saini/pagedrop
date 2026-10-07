@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { validateHtml } from "../html-policy.js";
 import { renderBody } from "./blocks.js";
+import { DIAGRAM_FENCES } from "./diagrams/names.js";
 import { normalize, validateDoc } from "./schema/index.js";
 import { escapeHtml, parseInfo, parseIr, parseMarkdown, slugify, splitFrontmatter } from "./parse.js";
 import { page } from "./shell.js";
@@ -86,7 +87,7 @@ export function render(input, opts = {}) {
 }
 
 /** Fences whose `data.src` names a JSON file on disk rather than a media URL. */
-const SRC_FENCES = new Set(["chart", "stats", "hero", "flow", "sequence", "timeline"]);
+const SRC_FENCES = new Set(["chart", "stats", "hero", "flow", "sequence", "timeline", ...DIAGRAM_FENCES]);
 
 /**
  * Replace `{"src": "data/rows.json"}` in a data fence with the file's contents,

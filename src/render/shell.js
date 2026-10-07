@@ -152,6 +152,7 @@ table.full{width:100%}
 .fig-note{font-size:14px;color:var(--ink);margin-top:6px}
 .fig-cap{font-size:14px;color:var(--ink);margin-top:8px}
 svg.chart{display:block;overflow:visible;min-width:520px}
+svg.chart.compact{min-width:0}
 .fig-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 /* Every chart label gets a true-black halo, so one crossing a bar, line or gridline still reads. */
 .chart text{paint-order:stroke fill;stroke:#000;stroke-width:3px;stroke-linejoin:round}

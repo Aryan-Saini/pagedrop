@@ -23,6 +23,7 @@ import {
 } from "./media.js";
 import { validateHtmlBlock } from "./html.js";
 import { FAVICONS } from "../shell.js";
+import { DIAGRAMS } from "../diagrams/index.js";
 
 /** @typedef {import("../ir.js").Block} Block */
 /** @typedef {import("../ir.js").Doc} Doc */
@@ -42,6 +43,7 @@ const VALIDATORS = {
   video: validateVideo,
   file: validateFile,
   html: validateHtmlBlock,
+  ...Object.fromEntries(Object.entries(DIAGRAMS).map(([name, d]) => [name, d.validate])),
 };
 
 const CONTAINER_SET = new Set(CONTAINER_KINDS);
@@ -239,7 +241,10 @@ function normalizeBlock(block) {
     case "diff":
       return { file: "", title: "", ...block };
 
-    default:
+    default: {
+      const diagram = Object.hasOwn(DIAGRAMS, block.type) ? DIAGRAMS[block.type] : undefined;
+      if (diagram && block.data && typeof block.data === "object") return { ...block, data: diagram.normalize(block.data) };
       return block;
+    }
   }
 }

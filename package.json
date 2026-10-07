@@ -24,6 +24,8 @@
   },
   "dependencies": {
     "commander": "^14.0.0",
+    "d3-hierarchy": "^3.1.2",
+    "d3-sankey": "~0.12.3",
     "marked": "^18.0.13",
     "nanoid": "^5.1.5",
     "parse5": "^7.3.0",
