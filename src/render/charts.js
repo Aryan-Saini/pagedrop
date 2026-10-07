@@ -783,7 +783,8 @@ export function heatmap(rowLabels, colLabels, values, { title = "", note = "", f
   const labelW = Math.min(Math.round(W0 * 0.45), Math.max(96, Math.ceil(widest(rowLabels) + 14)));
   // A cell is never narrower than its widest printed value (six decimals included), so
   // neighbours never overlap; when the cells no longer fit, the chart widens and scrolls.
-  const valueW = Math.ceil(widest(values.flat().map((v) => format(v)), 11) + 8);
+  // Column headers (12px) need the same room, or neighbouring headers overprint.
+  const valueW = Math.ceil(Math.max(widest(values.flat().map((v) => format(v)), 11), widest(colLabels)) + 8);
   const cw = Math.max(6, valueW, Math.min(Math.max(cell, valueW), (W0 - labelW - 12) / colLabels.length - gap));
   const W = Math.max(W0, Math.ceil(labelW + colLabels.length * (cw + gap) + 12));
   const H = rowLabels.length * (cell + gap) + 34;

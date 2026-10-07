@@ -159,7 +159,7 @@ function linesBody(ctx, body) {
   if (body.xScale !== "log2" && body.xScale !== "log10") {
     const bad = x.findIndex((v) => Math.abs(v) > 1e15);
     if (bad >= 0) ctx.at(ptr("", "x", bad), `expected a value within ±1e15, got ${show(x[bad])}; rescale the units`);
-    else if (x[x.length - 1] - x[0] < 1e-9) ctx.at("/x", `expected x to span at least 1e-9, got ${x[x.length - 1] - x[0]}; rescale the units`);
+    else if (x[x.length - 1] - x[0] < 1e-300) ctx.at("/x", `expected x to span at least 1e-300, got ${x[x.length - 1] - x[0]}; rescale the units`);
   }
   // Labels are optional beside `x`; when given they name each point.
   if (body.labels !== undefined && labelArray(ctx, body.labels, "/labels")) {
@@ -522,6 +522,10 @@ const KINDS = {
       if (!wantObject(ctx, p, at, "a point { x, y }")) return;
       if (wantNumber(ctx, p.x, ptr(at, "x"))) positiveOnLog(ctx, [p.x], xLog, "x", () => ptr(at, "x"));
       if (wantNumber(ctx, p.y, ptr(at, "y"))) positiveOnLog(ctx, [p.y], yLog, "y", () => ptr(at, "y"));
+      // Flat points are drawn on axes that start at 0; a negative one would land off the plot.
+      for (const k of /** @type {const} */ (["x", "y"])) {
+        if (typeof p[k] === "number" && p[k] < 0 && !(k === "x" ? xLog : yLog)) ctx.at(ptr(at, k), `expected 0 or more for flat points, got ${show(p[k])}; use series for negative data`);
+      }
       if (p.size !== undefined && wantNumber(ctx, p.size, ptr(at, "size"))) {
         // Bubble area is sqrt(size / max); a negative radius is not drawable.
         if (/** @type {number} */ (p.size) < 0) ctx.at(ptr(at, "size"), `expected a size of 0 or more, got ${show(p.size)}`);

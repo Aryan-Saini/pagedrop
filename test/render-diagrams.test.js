@@ -153,3 +153,11 @@ test("charts share the per-figure budget, and heatmap cells fit their printed va
   for (const [, w] of cells) assert.ok(w >= 8 * 11 * 0.56, `cell ${w} wide is narrower than "0.123456"`);
   for (let i = 1; i < cells.length; i++) assert.ok(cells[i][0] >= cells[i - 1][0] + cells[i - 1][1], "cells overlap");
 });
+
+test("flat scatter rejects negative points; heatmap cells make room for their headers", () => {
+  assert.ok(one("chart scatter", { points: [{ x: -1, y: 1 }, { x: 1, y: 1 }] }).errors.some((e) => e.message.startsWith("/points/0/x expected 0 or more")));
+  const cols = Array.from({ length: 40 }, (_, i) => "c" + i);
+  const hm = one("chart heatmap", { rows: ["a"], cols, values: [cols.map((_, i) => i % 7)] });
+  const xs = [...hm.html.matchAll(/<text x="([\d.]+)"[^>]*class="tick tick-x">c/g)].map((m) => Number(m[1]));
+  for (let i = 1; i < xs.length; i++) assert.ok(xs[i] - xs[i - 1] >= 3 * 12 * 0.56, `headers ${i - 1} and ${i} overprint`);
+});
