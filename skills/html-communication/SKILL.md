@@ -194,8 +194,8 @@ flat span c1`…`c8` (`span` is the critical-path amber). Consecutive fences wit
 `"compact": true` share a row, for snapshots and small multiples. Unknown keys
 fail the render.
 
-**Limits**, each reported at the fence when crossed: one diagram may render to
-320 KB. `tree` 400 nodes, 32 deep, 32 cells a node. `graph` 150 nodes, 300
+**Limits**, each reported at the fence when crossed: one diagram or chart may
+render to 320 KB. `tree` 400 nodes, 32 deep, 32 cells a node. `graph` 150 nodes, 300
 edges, no control characters in ids. `lanes` 24 lanes, 200 segments a lane, 100
 messages, names up to 40 characters, times within ±1e9. `structure` 64 cells,
 64 pointers. `pipeline` 64 rows, 128 steps, 2048 filled cells. `layers` 32.
@@ -205,11 +205,14 @@ links, values 1e-9 to 1e15. `lanes` segments span at least 1e-6 in total;
 `structure` `start` stays within ±1e9. Log axes take values from 1e-100 to
 1e100; a numeric `x` takes up to 1000 values within ±1e15 spanning at least 1e-9.
 `graph` 16 groups, ranks 0 to 149. `tokens` 64 tokens, 128 arcs, 6 tag rows, 64
-spans, 512 alignment links, weights 0 to 1. `nn` 2 to 12 layers of up to 1e6
-neurons (over 12 collapse round an ellipsis), 64 dropout pairs. `tensors` 12
-stages, dims 1 to 1e6. `trellis` 2 to 8 states, 16 observations. `chart
-heatmap` 64 rows and cols; `chart lines` points and `chart scatter` series up
-to 1000 points each (2000 in a scatter), 8 refs, 32 marks.
+spans, 512 alignment links, weights 0 to 1, 8 BIO entity types; tokens and arc
+and span labels up to 40 characters, tag names and tags 24. `nn` 2 to 12
+layers of up to 1e6 neurons (over 12 collapse round an ellipsis), 64 dropout
+pairs, input and output labels 24 characters, names 40. `tensors` 12 stages,
+dims 1 to 1e6, ops and labels 24 characters. `trellis` 2 to 8 states, 16
+observations, labels 16 characters. `chart heatmap` 40 rows and cols; `chart
+lines` points and `chart scatter` series up to 1000 points each (2000 in a
+scatter), 8 refs, 32 marks; a linear axis spans or reaches at least 1e-9.
 
 ### flow and sequence
 

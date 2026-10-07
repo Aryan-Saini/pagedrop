@@ -69,12 +69,19 @@ export function withDiagramCache(fn) {
   }
 }
 
-/** @param {{ type: string, data: unknown }} block */
-export function renderDiagram(block) {
+/**
+ * Draw a figure block once per `withDiagramCache` call: diagrams, and charts,
+ * which share the per-figure budget.
+ * @param {object} block @param {() => string} draw
+ */
+export function drawOnce(block, draw) {
   let html = drawn?.get(block);
   if (html === undefined) {
-    html = DIAGRAMS[block.type].render(block);
+    html = draw();
     drawn?.set(block, html);
   }
   return html;
 }
+
+/** @param {{ type: string, data: unknown }} block */
+export const renderDiagram = (block) => drawOnce(block, () => DIAGRAMS[block.type].render(block));

@@ -42,7 +42,7 @@ const MAX_SCATTER_POINTS = 2000;
 const MAX_REFS = 8;
 const MAX_MARKS = 32;
 /** Heatmap rows and columns: past this the cells are too thin to carry a value. */
-const MAX_CELLS_SIDE = 64;
+const MAX_CELLS_SIDE = 40;
 /** A linear axis keeps its values within this magnitude, so tick steps stay finite. */
 const LINEAR_LIMIT = 1e15;
 
@@ -221,8 +221,10 @@ function spanOk(ctx, values, scale, zero, axis, at) {
   if (isLog(scale) || values.length === 0) return;
   let lo = zero ? 0 : Infinity, hi = zero ? 0 : -Infinity;
   for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
-  const span = hi - lo;
-  if (span > 0 && span < 1e-9) ctx.at(at, `expected the ${axis} values to span at least 1e-9, got ${span}; rescale the units`);
+  // A constant axis is ticked by its magnitude instead of its span, so that has the same floor:
+  // below it the tick step underflows and the plot would carry NaN.
+  const reach = hi - lo || Math.max(Math.abs(lo), Math.abs(hi));
+  if (reach > 0 && reach < 1e-9) ctx.at(at, `expected the ${axis} values to span or reach at least 1e-9, got ${reach}; rescale the units`);
 }
 
 /** True when a lines body draws `points` series rather than `values` over shared labels or x. */
@@ -311,7 +313,7 @@ function refsOf(ctx, body, numericX, scalesOk) {
  * Scatter `series: [{ name, points: [[x, y], ...], tone? }]`: coloured groups
  * with a legend, in place of the flat `points`.
  */
-function scatterSeries(ctx, body, scalesOk) {
+function scatterSeries(ctx, body, scalesOk, marks) {
   if (!wantNonEmptyArray(ctx, body.series, "/series", "at least one series")) return;
   const series = /** @type {unknown[]} */ (body.series);
   if (!seriesCap(ctx, series.length, "/series")) return;
@@ -336,22 +338,29 @@ function scatterSeries(ctx, body, scalesOk) {
     unknownKeys(ctx, s, at, ["name", "points", "tone"]);
   });
   if (!ok || !scalesOk) return;
-  // Marks share the axes, but a span too small to tick is already one the points cannot fill.
-  spanOk(ctx, xs, body.xScale, false, "x", "/series");
-  spanOk(ctx, ys, body.yScale, false, "y", "/series");
+  // Marks share the axes, so they count toward the plotted domain.
+  spanOk(ctx, [...xs, ...marks.xs], body.xScale, false, "x", "/series");
+  spanOk(ctx, [...ys, ...marks.ys], body.yScale, false, "y", "/series");
 }
 
 /** Scatter `marks: [{ at: [x, y], label? }]`, drawn as a labelled cross (a centroid). */
-function marksOf(ctx, marks, scales) {
-  if (marks === undefined) return;
-  if (tooMany(ctx, marks, "/marks", MAX_MARKS, "marks") || !wantArray(ctx, marks, "/marks", "an array of marks")) return;
+function marksOf(ctx, marks, scales, flat) {
+  /** @type {{ xs: number[], ys: number[] }} */ const out = { xs: [], ys: [] };
+  if (marks === undefined) return out;
+  if (tooMany(ctx, marks, "/marks", MAX_MARKS, "marks") || !wantArray(ctx, marks, "/marks", "an array of marks")) return out;
   marks.forEach((m, i) => {
     const at = ptr("", "marks", i);
     if (!wantObject(ctx, m, at, "a mark { at: [x, y], label }")) return;
-    pair(ctx, m.at, ptr(at, "at"), scales);
+    if (pair(ctx, m.at, ptr(at, "at"), scales)) {
+      const [x, y] = /** @type {[number, number]} */ (m.at);
+      // Flat points are drawn on axes that start at 0, so a negative mark would land off the plot.
+      if (flat && (x < 0 || y < 0)) ctx.at(ptr(at, "at"), `expected coordinates of 0 or more beside flat points, got [${x}, ${y}]; use series for negative data`);
+      out.xs.push(x); out.ys.push(y);
+    }
     optionalString(ctx, m.label, ptr(at, "label"));
     unknownKeys(ctx, m, at, ["at", "label"]);
   });
+  return out;
 }
 
 /**
@@ -403,7 +412,14 @@ const KINDS = {
     optionalString(ctx, body.yTitle, "/yTitle");
     optionalBoolean(ctx, body.square, "/square");
     if (hasPointSeries(body)) pointLinesBody(ctx, body);
-    else linesBody(ctx, body);
+    else {
+      linesBody(ctx, body);
+      if (Array.isArray(body.series)) {
+        const vals = body.series.flatMap((s) => (isObject(s) && Array.isArray(s.values) ? s.values : []))
+          .filter((v) => typeof v === "number" && Number.isFinite(v));
+        spanOk(ctx, vals, body.yScale, body.zeroFloor !== false, "y", "/series");
+      }
+    }
     optionalBoolean(ctx, body.area, "/area");
     optionalBoolean(ctx, body.zeroFloor, "/zeroFloor");
     if (body.zeroFloor === true && (body.yScale === "log2" || body.yScale === "log10")) {
@@ -492,10 +508,10 @@ const KINDS = {
     const scalesOk = optionalEnum(ctx, body.xScale, "/xScale", SCALES) && optionalEnum(ctx, body.yScale, "/yScale", SCALES);
     const xLog = scalesOk && body.xScale;
     const yLog = scalesOk && body.yScale;
-    marksOf(ctx, body.marks, scalesOk ? body : {});
+    const marks = marksOf(ctx, body.marks, scalesOk ? body : {}, body.series === undefined);
     if (body.series !== undefined) {
       if (body.points !== undefined) ctx.at("/points", "cannot be combined with series; give each group its own points");
-      scatterSeries(ctx, body, scalesOk);
+      scatterSeries(ctx, body, scalesOk, marks);
       return SCATTER_KEYS;
     }
     if (tooMany(ctx, body.points, "/points", MAX_POINTS, "points")) return SCATTER_KEYS;
@@ -512,6 +528,10 @@ const KINDS = {
       optionalString(ctx, p.label, ptr(at, "label"));
       unknownKeys(ctx, p, at, ["x", "y", "size", "label"]);
     });
+    const num = (v) => typeof v === "number" && Number.isFinite(v);
+    const pts = /** @type {{ x?: unknown, y?: unknown }[]} */ (body.points).filter(isObject);
+    spanOk(ctx, [...pts.map((p) => p.x).filter(num), ...marks.xs], body.xScale, true, "x", "/points");
+    spanOk(ctx, [...pts.map((p) => p.y).filter(num), ...marks.ys], body.yScale, true, "y", "/points");
     return SCATTER_KEYS;
   },
 

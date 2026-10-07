@@ -134,6 +134,11 @@ const svgOpen = (w, h, label) =>
   `<svg viewBox="-6 -4 ${w + 14} ${h + 8}" width="100%" role="img" aria-label="${esc(label)}" ` +
   `preserveAspectRatio="xMidYMid meet" class="chart">`;
 
+/** `svgOpen` for a chart wider than the column: kept at its natural size, the figure scrolls sideways. */
+const svgOpenScroll = (w, h, label) =>
+  `<svg viewBox="-6 -4 ${w + 14} ${h + 8}" width="100%" style="min-width:${w + 14}px" role="img" aria-label="${esc(label)}" ` +
+  `preserveAspectRatio="xMidYMid meet" class="chart">`;
+
 /**
  * `svgOpen` for a chart narrower than the column (a square plot): drawn at its
  * own size and centred rather than stretched to the full width.
@@ -769,11 +774,14 @@ export function whisker(rows, { title = "", note = "", format = (v) => compact(v
  * predictions of a confusion matrix), inset so the value stays clear of it.
  */
 export function heatmap(rowLabels, colLabels, values, { title = "", note = "", format = (v) => String(v), emphasis = "" } = {}) {
-  const cell = 34, gap = 2, W = 720;
-  // Row labels may take at most 45% of the width, and a cell never goes below 6px,
-  // so a very long label cannot push the cell width negative.
-  const labelW = Math.min(Math.round(W * 0.45), Math.max(96, Math.ceil(widest(rowLabels) + 14)));
-  const cw = Math.max(6, Math.min(cell, (W - labelW - 12) / colLabels.length - gap));
+  const cell = 34, gap = 2, W0 = 720;
+  // Row labels may take at most 45% of the column, so a very long label cannot squeeze the cells.
+  const labelW = Math.min(Math.round(W0 * 0.45), Math.max(96, Math.ceil(widest(rowLabels) + 14)));
+  // A cell is never narrower than its widest printed value (six decimals included), so
+  // neighbours never overlap; when the cells no longer fit, the chart widens and scrolls.
+  const valueW = Math.ceil(widest(values.flat().map((v) => format(v)), 11) + 8);
+  const cw = Math.max(6, valueW, Math.min(Math.max(cell, valueW), (W0 - labelW - 12) / colLabels.length - gap));
+  const W = Math.max(W0, Math.ceil(labelW + colLabels.length * (cw + gap) + 12));
   const H = rowLabels.length * (cell + gap) + 34;
   const max = Math.max(...values.flat());
   let body = "";
@@ -801,7 +809,8 @@ export function heatmap(rowLabels, colLabels, values, { title = "", note = "", f
         `fill="${ink}"${ink === "#000" ? ` style="stroke:${fill}"` : ""}>${esc(format(v))}</text>`;
     });
   });
-  return frame(svgOpen(W, H, title || "heat map") + body + "</svg>", title, note);
+  const open = W > W0 ? svgOpenScroll(W, H, title || "heat map") : svgOpen(W, H, title || "heat map");
+  return frame(open + body + "</svg>", title, note);
 }
 
 /**

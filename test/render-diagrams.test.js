@@ -139,3 +139,17 @@ test("a heatmap with a very long row label keeps positive cell widths", () => {
   assert.equal(r.errors.length, 0);
   assert.doesNotMatch(r.html, /width="-/);
 });
+
+test("charts share the per-figure budget, and heatmap cells fit their printed values", () => {
+  const labels = Array.from({ length: 1000 }, (_, i) => "l" + i);
+  const big = one("chart lines", { labels, series: Array.from({ length: 5 }, (_, k) => ({ name: "s" + k, values: labels.map((_, i) => i + k) })) });
+  assert.equal(big.errors.length, 1);
+  assert.equal(big.errors[0].line, 7);
+  assert.match(big.errors[0].message, /^renders to \d+ KB; one figure may take 320 KB/);
+
+  const dec = one("chart heatmap", { decimals: 6, rows: ["a"], cols: ["a", "b", "c"], values: [[0.123456, 0.654321, 0.999999]] });
+  const cells = [...dec.html.matchAll(/<rect x="([\d.]+)" y="[\d.]+" width="([\d.]+)" height="34"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.equal(cells.length, 3);
+  for (const [, w] of cells) assert.ok(w >= 8 * 11 * 0.56, `cell ${w} wide is narrower than "0.123456"`);
+  for (let i = 1; i < cells.length; i++) assert.ok(cells[i][0] >= cells[i - 1][0] + cells[i - 1][1], "cells overlap");
+});

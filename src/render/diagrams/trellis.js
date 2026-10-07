@@ -208,5 +208,5 @@ export function render(block) {
     { x0: stateRight - stateW, y0: -r - 28, x1: X(T - 1) + Math.max(r, obsW / 2), y1: Y(S - 1) + r },
   ], 8);
   const aria = d.title || `trellis over ${S} states and ${T} observations`;
-  return figure(svgOpen(box, { label: aria, compact: d.compact }) + body + "</svg>", d.title, d.note);
+  return figure(svgOpen(box, { label: aria, compact: d.compact, scroll: true }) + body + "</svg>", d.title, d.note);
 }

@@ -185,7 +185,9 @@ function checkRanks(ctx, ids, pins, links) {
   const { conflicts, cyclic } = rank(order, links, pins);
   for (const c of conflicts) {
     ctx.at(ptr("", "nodes", order.indexOf(c.id), "rank"),
-      `${JSON.stringify(c.id)} is pinned to rank ${c.rank}, but the edge from ${JSON.stringify(c.via)} needs it at rank ${c.need} or later; raise this rank or pin ${JSON.stringify(c.via)} earlier`);
+      `${JSON.stringify(c.id)} is pinned to rank ${c.rank}, but the edge from ${JSON.stringify(c.via)} needs it at rank ${c.need} or later; raise this rank` +
+      // Nothing can be pinned before rank 0, so only suggest moving the source when there is room.
+      (c.need - 1 > 0 ? ` or pin ${JSON.stringify(c.via)} earlier` : ""));
   }
   if (cyclic && !conflicts.length) ctx.at("/nodes", "the pinned ranks force a cycle of edges to run forward; unpin a node on the cycle");
 }

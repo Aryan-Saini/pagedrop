@@ -168,5 +168,5 @@ export function render(block) {
   rects.push({ x0: 0, y0: rise, x1: 0, y1: 0 });
 
   const label = d.title || `tensor shapes ${d.stages.map((s) => s.dims.join("x")).join(" to ")}`;
-  return figure(svgOpen(bounds(rects, 8), { label, compact: d.compact }) + mk.defs() + body + "</svg>", d.title, d.note);
+  return figure(svgOpen(bounds(rects, 8), { label, compact: d.compact, scroll: true }) + mk.defs() + body + "</svg>", d.title, d.note);
 }

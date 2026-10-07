@@ -500,7 +500,7 @@ test("ML additions are rejected with a pointer when malformed", () => {
     ["lines", { series: [{ name: "s", points: pts(1001) }] }, "/series/0/points expected at most 1000 points, got 1001"],
     ["lines", { series: [{ name: "s", points: [[0, 1], [1e16, 2]] }] }, "/series/0/points/1/0 expected a value within ±1e15, got 10000000000000000; rescale the units"],
     ["lines", { yScale: "log10", series: [{ name: "s", points: [[0, 1], [1, 0]] }] }, "/series/0/points/1/1 expected a value > 0 on the log10 y axis, got 0"],
-    ["lines", { series: [{ name: "s", points: [[0, 1], [1e-12, 1]] }] }, "/series expected the x values to span at least 1e-9, got 1e-12; rescale the units"],
+    ["lines", { series: [{ name: "s", points: [[0, 1], [1e-12, 1]] }] }, "/series expected the x values to span or reach at least 1e-9, got 1e-12; rescale the units"],
     ["lines", { labels: ["a", "b"], refs: ["diagonal"], series: [{ name: "s", values: [1, 2] }] }, "/refs/0 needs a numeric x axis; give x or series points"],
     ["lines", { labels: ["a", "b"], refs: [{ x: 1 }], series: [{ name: "s", values: [1, 2] }] }, "/refs/0/x needs a numeric x axis; give x or series points"],
     ["lines", { yScale: "log10", refs: ["diagonal"], series: [{ name: "s", points: [[1, 1], [2, 2]] }] }, '/refs/0 expected the same xScale and yScale for the diagonal, got "linear" and "log10"'],
@@ -518,7 +518,7 @@ test("ML additions are rejected with a pointer when malformed", () => {
     ["heatmap", { rows: ["a"], cols: ["a"], values: [[1]], emphasis: "rows" }, '/emphasis expected one of diagonal, got "rows"'],
     ["heatmap", { rows: ["a"], cols: ["a"], values: [[1]], decimals: 7 }, "/decimals expected an integer from 0 to 6, got 7"],
     ["heatmap", { rows: ["a"], cols: ["a"], values: [[1]], decimals: 2, format: "pct" }, "/decimals cannot be combined with format; decimals prints every cell as a plain number"],
-    ["heatmap", { rows: Array(65).fill("r"), cols: ["a"], values: [] }, "/rows expected at most 64 rows, got 65"],
+    ["heatmap", { rows: Array(41).fill("r"), cols: ["a"], values: [] }, "/rows expected at most 40 rows, got 41"],
   ];
   for (const [kind, data, expected] of cases) assert.deepEqual(chartErrs(kind, data), [expected], `${kind} ${JSON.stringify(data).slice(0, 80)}`);
 });
@@ -534,10 +534,20 @@ test("malformed ML bodies are diagnostics, never throws", () => {
   }
 });
 
+test("a constant axis too small to tick is rejected, not drawn with NaN", () => {
+  for (const v of [3e-300, 1e-320, 5e-324]) {
+    assert.match(chartErrs("lines", { zeroFloor: false, series: [{ name: "s", points: [[0, v], [1, v]] }] })[0], /span or reach at least 1e-9/);
+    assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[v, v]] }] })[0], /span or reach at least 1e-9/);
+  }
+  // Marks count toward the plotted domain, and beside flat points they must sit on the 0-based axes.
+  assert.match(chartErrs("scatter", { series: [{ name: "s", points: [[0, 0]] }], marks: [{ at: [5e-324, 5e-324] }] })[0], /reach at least 1e-9/);
+  assert.match(chartErrs("scatter", { points: [{ x: 1, y: 1 }], marks: [{ at: [-10, -10] }] })[0], /^\/marks\/0\/at expected coordinates of 0 or more/);
+});
+
 test("extreme but valid ML bodies render finite geometry", () => {
   const bodies = [
     ["lines", { series: [{ name: "s", points: [[-1e15, -1e15], [1e15, 1e15]] }], refs: ["diagonal", { x: 0, label: "z" }, { y: 0, label: "z" }] }],
-    ["lines", { zeroFloor: false, series: [{ name: "s", points: [[0, 3e-300], [1, 3e-300]] }] }],
+    ["lines", { zeroFloor: false, series: [{ name: "s", points: [[0, 2e-9], [1, 2e-9]] }] }],
     ["lines", { xScale: "log10", yScale: "log10", refs: ["diagonal"], series: [{ name: "s", points: [[1e-100, 1e100], [1e100, 1e-100]] }] }],
     ["scatter", { series: [{ name: "s", points: [[5, 5]] }], marks: [{ at: [5, 5], label: "only" }] }],
     ["scatter", { xScale: "log2", series: [{ name: "s", points: [[1e-100, -1e15], [1e100, 1e15]] }] }],

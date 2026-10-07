@@ -19,7 +19,8 @@ import { fileURLToPath } from "node:url";
 import { validateHtml } from "../html-policy.js";
 import { renderBody } from "./blocks.js";
 import { DIAGRAM_FENCES } from "./diagrams/names.js";
-import { DIAGRAMS, FIGURE_BUDGET, renderDiagram, withDiagramCache } from "./diagrams/index.js";
+import { DIAGRAMS, FIGURE_BUDGET, drawOnce, renderDiagram, withDiagramCache } from "./diagrams/index.js";
+import { renderChart } from "./charts.js";
 import { normalize, validateDoc } from "./schema/index.js";
 import { escapeHtml, parseInfo, parseIr, parseMarkdown, slugify, splitFrontmatter } from "./parse.js";
 import { page } from "./shell.js";
@@ -82,11 +83,13 @@ export function render(input, opts = {}) {
   // reported at its fence; the cache means the page body reuses that markup.
   const html = withDiagramCache(() => {
     for (const block of doc.blocks) {
-      if (!Object.hasOwn(DIAGRAMS, block.type)) continue;
-      const bytes = new TextEncoder().encode(renderDiagram(block)).length;
+      const isChart = block.type === "chart";
+      if (!isChart && !Object.hasOwn(DIAGRAMS, block.type)) continue;
+      const markup = isChart ? drawOnce(block, () => renderChart(block)) : renderDiagram(block);
+      const bytes = new TextEncoder().encode(markup).length;
       if (bytes > FIGURE_BUDGET) {
-        errors.push({ file, line: block.line, block: block.type,
-          message: `renders to ${Math.round(bytes / 1024)} KB; one diagram may take ${FIGURE_BUDGET / 1024} KB of the 512 KB page, so split it or drop labels` });
+        errors.push({ file, line: block.line, block: isChart ? `chart ${block.kind}` : block.type,
+          message: `renders to ${Math.round(bytes / 1024)} KB; one figure may take ${FIGURE_BUDGET / 1024} KB of the 512 KB page, so split it or drop labels` });
       }
     }
     if (errors.length) return null;
