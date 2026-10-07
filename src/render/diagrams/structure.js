@@ -14,6 +14,7 @@
 import {
   Ctx, ptr, show, wantObject, wantArray, wantNonEmptyArray, wantText, isObject,
   optionalString, optionalBoolean, optionalEnum, unknownKeys,
+  tooMany,
 } from "../schema/common.js";
 import { DIAGRAM_TONES, INK, inkOf, markers, text, svgOpen, figure, bounds, textW, n } from "./svg.js";
 
@@ -100,13 +101,13 @@ export function validate(errors, block, file) {
     if (body.cycle !== undefined && body.cycle !== null) wantIndex(ctx, body.cycle, "/cycle", 0, last);
   } else if (kind === "array") {
     const start = body.start ?? 0;
-    if (!Number.isInteger(start)) ctx.at("/start", `expected an integer, got ${show(body.start)}`);
-    if (body.pointers !== undefined && wantArray(ctx, body.pointers, "/pointers", "an array of pointers")) {
+    if (!Number.isInteger(start) || Math.abs(start) > 1e9) ctx.at("/start", `expected an integer within ±1e9, got ${show(body.start)}`);
+    if (body.pointers !== undefined && !tooMany(ctx, body.pointers, "/pointers", 64, "pointers") && wantArray(ctx, body.pointers, "/pointers", "an array of pointers")) {
       /** @type {unknown[]} */ (body.pointers).forEach((p, i) => {
         const pp = ptr("", "pointers", i);
         if (!wantObject(ctx, p, pp, "a pointer { name, at }")) return;
         wantText(ctx, p.name, ptr(pp, "name"), "a pointer name");
-        if (Number.isInteger(start)) wantIndex(ctx, p.at, ptr(pp, "at"), /** @type {number} */ (start), /** @type {number} */ (start) + last);
+        if (Number.isInteger(start) && Math.abs(start) <= 1e9) wantIndex(ctx, p.at, ptr(pp, "at"), /** @type {number} */ (start), /** @type {number} */ (start) + last);
         optionalEnum(ctx, p.tone, ptr(pp, "tone"), DIAGRAM_TONES);
         unknownKeys(ctx, p, pp, ["name", "at", "tone"]);
       });

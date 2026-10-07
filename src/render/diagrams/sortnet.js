@@ -14,6 +14,7 @@
 import {
   Ctx, ptr, show, wantObject, wantNonEmptyArray, numberArray,
   optionalString, optionalBoolean, unknownKeys,
+  tooMany,
 } from "../schema/common.js";
 import { INK, inkOf, n, text, svgOpen, figure, bounds, textW } from "./svg.js";
 
@@ -44,7 +45,7 @@ export function validate(errors, block, file) {
     }
   }
 
-  if (!wantNonEmptyArray(ctx, body.layers, "/layers", "at least one layer of comparators")) return;
+  if (tooMany(ctx, body.layers, "/layers", 64, "layers") || !wantNonEmptyArray(ctx, body.layers, "/layers", "at least one layer of comparators")) return;
   /** @type {unknown[]} */ (body.layers).forEach((layer, li) => {
     const lp = ptr("", "layers", li);
     if (!wantNonEmptyArray(ctx, layer, lp, "at least one comparator [a, b]")) return;

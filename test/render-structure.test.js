@@ -51,7 +51,7 @@ test("indices must land on a cell, counted from start for pointers", () => {
     ["s.md:5 structure: /pointers/0/at expected an index 1..3, got 0"]);
   assert.deepEqual(errorsOf({ kind: "array", cells: [4], pointers: [{ at: 0 }] }),
     ["s.md:5 structure: /pointers/0/name expected a pointer name, got nothing"]);
-  assert.deepEqual(errorsOf({ kind: "array", cells: [4], start: 0.5 }), ["s.md:5 structure: /start expected an integer, got 0.5"]);
+  assert.deepEqual(errorsOf({ kind: "array", cells: [4], start: 0.5 }), ["s.md:5 structure: /start expected an integer within ±1e9, got 0.5"]);
 });
 
 test("normalize fills defaults per kind", () => {

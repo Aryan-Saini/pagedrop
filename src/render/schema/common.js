@@ -280,3 +280,15 @@ export function wantUrl(ctx, v, pointer, kind = /** @type {"image" | "video" | "
   const message = srcError(kind, v);
   return message ? ctx.at("", message) : true;
 }
+
+/**
+ * Report an array longer than `max` at `pointer`. Diagram fences cap every
+ * collection, nested ones included, so layout cost and output size stay bounded.
+ * Use it ahead of the shape check: `if (!tooMany(...) && wantArray(...))`.
+ * @returns {boolean} true when the cap was exceeded (and reported)
+ */
+export function tooMany(ctx, v, pointer, max, noun) {
+  if (!Array.isArray(v) || v.length <= max) return false;
+  ctx.at(pointer, `expected at most ${max} ${noun}, got ${v.length}`);
+  return true;
+}

@@ -27,7 +27,7 @@ import { INK, inkOf, text, svgOpen, figure, textW, n } from "./svg.js";
 const isCount = (v, min) => Number.isInteger(v) && v >= min;
 
 /** The grid is drawn cell by cell, so both axes are capped. */
-const MAX_CYCLES = 128, MAX_ROWS = 64;
+const MAX_CYCLES = 128, MAX_ROWS = 64, MAX_FILLED = 2048;
 
 /** Validate a `pipeline` fence body. */
 export function validate(errors, block, file) {
@@ -41,7 +41,7 @@ export function validate(errors, block, file) {
   if (body.stall !== undefined) wantText(ctx, body.stall, "/stall", "a non-empty string");
   const stall = typeof body.stall === "string" ? body.stall : "stall";
 
-  let end = 0;
+  let end = 0, filled = 0;
   /** @type {Set<string>} */
   const texts = new Set();
   if (Array.isArray(body.rows) && body.rows.length > MAX_ROWS) {
@@ -63,11 +63,16 @@ export function validate(errors, block, file) {
         }
         if (c !== stall) texts.add(c);
       });
-      if (startOk) end = Math.max(end, (row.start ?? 0) + row.cells.length);
+      if (startOk) {
+        const rowEnd = (row.start ?? 0) + row.cells.length;
+        if (rowEnd > MAX_CYCLES) ctx.at(rp, `expected the row to end by step ${MAX_CYCLES}, got ${rowEnd}`);
+        end = Math.max(end, rowEnd);
+        filled += row.cells.filter((c) => c !== null).length;
+      }
     });
   }
   seriesCap(ctx, texts.size, "/rows", "distinct cell texts");
-  if (end > MAX_CYCLES) ctx.at("/rows", `expected every row to end by step ${MAX_CYCLES}, got ${end}`);
+  if (filled > MAX_FILLED) ctx.at("/rows", `expected at most ${MAX_FILLED} filled cells, got ${filled}; split the grid`);
 
   if (body.cycles !== undefined) {
     if (!isCount(body.cycles, 1)) ctx.at("/cycles", `expected a whole number >= 1, got ${show(body.cycles)}`);

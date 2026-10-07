@@ -21,6 +21,7 @@ import { hierarchy, tree as d3tree, cluster } from "d3-hierarchy";
 import {
   Ctx, ptr, show, isObject, wantObject, wantArray, wantNonEmptyArray, optionalString, optionalBoolean,
   optionalEnum, unknownKeys,
+  tooMany,
 } from "../schema/common.js";
 import {
   INK, DIAGRAM_TONES, inkOf, markers, text, badge, clip, svgOpen, figure, bounds, textW, n,
@@ -169,7 +170,8 @@ function checkNode(ctx, node, pointer, depth, shape) {
   } else if (node.cells !== undefined) {
     ctx.at(ptr(pointer, "cells"), `only applies to shape "cells"; this node's shape is "${own}"`);
   }
-  if (node.cells !== undefined && wantNonEmptyArray(ctx, node.cells, ptr(pointer, "cells"), "at least one cell value")) {
+  if (node.cells !== undefined && !tooMany(ctx, node.cells, ptr(pointer, "cells"), 32, "cells")
+    && wantNonEmptyArray(ctx, node.cells, ptr(pointer, "cells"), "at least one cell value")) {
     /** @type {unknown[]} */ (node.cells).forEach((c, i) => {
       if (!isScalar(c)) ctx.at(ptr(pointer, "cells", i), `expected a string or a number, got ${show(c)}`);
     });

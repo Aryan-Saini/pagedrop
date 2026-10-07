@@ -17,6 +17,7 @@
 import {
   Ctx, ptr, show, wantObject, wantArray, wantNonEmptyArray, wantText, optionalString, optionalBoolean,
   optionalEnum, unknownKeys,
+  tooMany,
 } from "../schema/common.js";
 import { INK, inkOf, text, svgOpen, figure, bounds, textW, n } from "./svg.js";
 
@@ -49,6 +50,7 @@ export function validate(errors, block, file) {
   const tables = new Map();
   if (Array.isArray(body.entities) && body.entities.length > MAX_ENTITIES) {
     ctx.at("/entities", `expected at most ${MAX_ENTITIES} tables, got ${body.entities.length}`);
+    return; // checking links against tables that were never collected would only add noise
   } else if (wantNonEmptyArray(ctx, body.entities, "/entities", "at least one entity")) {
     body.entities.forEach((e, i) => {
       const ep = ptr("", "entities", i);
@@ -62,7 +64,7 @@ export function validate(errors, block, file) {
         if (e.name.includes(".")) ctx.at(ptr(ep, "name"), `expected a table name without ".", got ${show(e.name)}; links address "table.field"`);
         else tables.set(e.name, names);
       }
-      if (!wantNonEmptyArray(ctx, e.fields, ptr(ep, "fields"), "at least one field")) return;
+      if (tooMany(ctx, e.fields, ptr(ep, "fields"), 40, "fields") || !wantNonEmptyArray(ctx, e.fields, ptr(ep, "fields"), "at least one field")) return;
       e.fields.forEach((f, k) => {
         const fp = ptr(ep, "fields", k);
         let name;
@@ -86,7 +88,7 @@ export function validate(errors, block, file) {
     });
   }
 
-  if (body.links === undefined || !wantArray(ctx, body.links, "/links", "an array of links")) return;
+  if (body.links === undefined || tooMany(ctx, body.links, "/links", 100, "links") || !wantArray(ctx, body.links, "/links", "an array of links")) return;
   body.links.forEach((l, i) => {
     const lp = ptr("", "links", i);
     if (!wantObject(ctx, l, lp, "a link { from, to, card }")) return;

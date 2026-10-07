@@ -44,6 +44,7 @@ export function validate(errors, block, file) {
   /** @type {Set<string>} */ const ids = new Set();
   if (Array.isArray(body.nodes) && (body.nodes.length === 1 || body.nodes.length > MAX_NODES)) {
     ctx.at("/nodes", `expected 2 to ${MAX_NODES} nodes, got ${body.nodes.length}`);
+    return; // checking links against ids that were never collected would only add noise
   } else if (wantNonEmptyArray(ctx, body.nodes, "/nodes", "at least two nodes")) {
     /** @type {unknown[]} */ (body.nodes).forEach((node, i) => {
       const np = ptr("", "nodes", i);

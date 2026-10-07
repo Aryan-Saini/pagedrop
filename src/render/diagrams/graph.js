@@ -58,6 +58,7 @@ export function validate(errors, block, file) {
   const ids = new Set();
   if (Array.isArray(body.nodes) && body.nodes.length > MAX_NODES) {
     ctx.at("/nodes", `expected at most ${MAX_NODES} nodes, got ${body.nodes.length}; split the graph`);
+    return; // checking edges against ids that were never collected would only add noise
   } else if (wantNonEmptyArray(ctx, body.nodes, "/nodes", "at least one node")) {
     /** @type {unknown[]} */ (body.nodes).forEach((node, i) => {
       const np = ptr("", "nodes", i);
@@ -496,6 +497,13 @@ function draw(/** @type {GraphBody} */ g) {
   // Beside means straight across: right/left first going down, above/below first going right.
   /** @type {[number, number][]} */
   const dirs = down ? [[1, 0], [-1, 0], [0, -1], [0, 1]] : [[0, -1], [0, 1], [1, 0], [-1, 0]];
+  // Each route's bounding box, so a candidate only runs the point-by-point hit test
+  // against routes that come near it; without this, placement is quadratic in route points.
+  const hull = new Map(routes.map((r) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of r.pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return [r, { x0: x0 - 1, y0: y0 - 1, x1: x1 + 1, y1: y1 + 1 }];
+  }));
   const spot = (/** @type {Route} */ r, /** @type {number} */ w, /** @type {number} */ h, /** @type {number[]} */ ts) => {
     // Fallback when every candidate is ruled out: just beside the midpoint.
     const m = along(r.pts, 0.5);
@@ -513,7 +521,7 @@ function draw(/** @type {GraphBody} */ g) {
         let cost = ti * 3 + di * 2;
         for (const o of solid) if (overlaps(box, o)) cost += 1000;
         for (const o of taken) if (overlaps(box, o)) cost += 1000;
-        for (const o of routes) if (lineHits(box, o.pts)) cost += o === r ? 120 : 80;
+        for (const o of routes) if (overlaps(box, /** @type {Box} */ (hull.get(o))) && lineHits(box, o.pts)) cost += o === r ? 120 : 80;
         if (cost < best.cost) best = { cost, x, y, box };
       });
     });

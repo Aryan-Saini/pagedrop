@@ -180,6 +180,15 @@ flat span c1`…`c8` (`span` is the critical-path amber). Consecutive fences wit
 `"compact": true` share a row, for snapshots and small multiples. Unknown keys
 fail the render.
 
+**Limits**, each reported at the fence when crossed: one diagram may render to
+320 KB. `tree` 400 nodes, 32 deep, 32 cells a node. `graph` 150 nodes, 300
+edges, no control characters in ids. `lanes` 24 lanes, 200 segments a lane, 100
+messages, names up to 40 characters, times within ±1e9. `structure` 64 cells,
+64 pointers. `pipeline` 64 rows, 128 steps, 2048 filled cells. `layers` 32.
+`er` 24 tables (no dots in names), 40 fields each, 100 links. `sortnet` 32
+wires, 64 layers. `sankey` 2 to 100 nodes, 400 links, values 1e-9 to 1e15. Log
+axes take values from 1e-100 to 1e100.
+
 ### flow and sequence
 
 ````markdown

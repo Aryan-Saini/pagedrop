@@ -138,6 +138,12 @@ function linesBody(ctx, body) {
     }
   }
   if (scalesOk) positiveOnLog(ctx, x, body.xScale, "x", (i) => ptr("", "x", i));
+  // A linear x axis is ticked in steps of its span, which must stay finite and well above zero.
+  if (body.xScale !== "log2" && body.xScale !== "log10") {
+    const bad = x.findIndex((v) => Math.abs(v) > 1e15);
+    if (bad >= 0) ctx.at(ptr("", "x", bad), `expected a value within ±1e15, got ${show(x[bad])}; rescale the units`);
+    else if (x[x.length - 1] - x[0] < 1e-9) ctx.at("/x", `expected x to span at least 1e-9, got ${x[x.length - 1] - x[0]}; rescale the units`);
+  }
   // Labels are optional beside `x`; when given they name each point.
   if (body.labels !== undefined && labelArray(ctx, body.labels, "/labels")) {
     const n = /** @type {string[]} */ (body.labels).length;

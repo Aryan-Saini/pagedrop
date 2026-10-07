@@ -85,3 +85,31 @@ test("every example diagram renders with finite geometry", () => {
     assert.doesNotMatch(r.html, /NaN|Infinity/, name);
   }
 });
+
+test("nested collections, extreme linear x and oversized figures are rejected at their fence", () => {
+  const cases = [
+    ["tree", { tree: { shape: "cells", cells: Array(33).fill(0) } }, "/tree/cells"],
+    ["er", { entities: [{ name: "t", fields: Array.from({ length: 41 }, (_, j) => ["f" + j, "int"]) }] }, "/entities/0/fields"],
+    ["lanes", { lanes: [{ name: "a", segs: Array.from({ length: 201 }, (_, i) => ({ from: i, to: i + 1 })) }] }, "/lanes/0/segs"],
+    ["structure", { kind: "array", cells: [1, 2], start: 1e300 }, "/start"],
+    ["pipeline", { rows: Array.from({ length: 30 }, (_, i) => ({ label: "r" + i, cells: Array(100).fill("IF") })) }, "/rows"],
+    ["chart lines", { x: [1e-310, 2e-310], series: [{ name: "s", values: [1, 2] }] }, "/x"],
+    ["chart lines", { x: [-1e308, 1e308], series: [{ name: "s", values: [1, 2] }] }, "/x/0"],
+  ];
+  for (const [info, body, pointer] of cases) {
+    const r = one(info, body);
+    assert.ok(r.errors.some((e) => e.message.startsWith(pointer)), `${info}: expected an error at ${pointer}, got ${JSON.stringify(r.errors.map((e) => e.message))}`);
+  }
+  // Over the cap, edges are not checked against ids that were never collected.
+  const nodes = Array.from({ length: 151 }, (_, i) => ({ id: String(i) }));
+  assert.equal(one("graph", { nodes, edges: [{ from: "0", to: "1" }] }).errors.length, 1);
+
+  // A diagram over the per-figure budget is reported at its fence line, not as a page failure.
+  const ns = Array.from({ length: 150 }, (_, i) => ({ id: "n" + i }));
+  const edges = [...ns.slice(1).map((nd, i) => ({ from: "n" + i, to: nd.id })),
+    ...Array.from({ length: 150 }, (_, k) => ({ from: "n" + (k % 75), to: "n" + ((k % 75) + 70 + (k % 5)), label: "edge " + k, step: (k % 9) + 1 }))];
+  const big = one("graph", { dir: "right", nodes: ns, edges });
+  assert.equal(big.errors.length, 1);
+  assert.equal(big.errors[0].line, 7);
+  assert.match(big.errors[0].message, /^renders to \d+ KB/);
+});

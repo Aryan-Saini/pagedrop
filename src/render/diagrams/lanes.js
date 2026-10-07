@@ -14,6 +14,7 @@
 import {
   Ctx, ptr, show, wantObject, wantArray, wantNonEmptyArray, wantNumber, wantText,
   optionalString, optionalBoolean, optionalEnum, unknownKeys,
+  tooMany,
 } from "../schema/common.js";
 import { INK, inkOf, markers, text, badge, svgOpen, figure, textW, n } from "./svg.js";
 
@@ -42,7 +43,7 @@ const TOP_KEYS = ["title", "note", "compact", "axis", "lanes", "msgs"];
 
 /** Validate a `lanes` fence body. */
 /** Times stay in a range where scaling to pixels is exact; names stay short enough to leave room for the bars. */
-const MAX_TIME = 1e9, MIN_EXTENT = 1e-6, MAX_NAME = 24;
+const MAX_TIME = 1e9, MIN_EXTENT = 1e-6, MAX_NAME = 40;
 
 export function validate(errors, block, file) {
   const ctx = new Ctx(errors, file, block.line, "lanes");
@@ -57,7 +58,7 @@ export function validate(errors, block, file) {
   /** @type {Set<string>} */
   const names = new Set();
   let t0 = Infinity, t1 = -Infinity;
-  if (wantNonEmptyArray(ctx, body.lanes, "/lanes", "at least one lane")) {
+  if (!tooMany(ctx, body.lanes, "/lanes", 24, "lanes") && wantNonEmptyArray(ctx, body.lanes, "/lanes", "at least one lane")) {
     body.lanes.forEach((lane, i) => {
       const lp = ptr("", "lanes", i);
       if (!wantObject(ctx, lane, lp, "a lane { name, segs }")) return;
@@ -67,7 +68,7 @@ export function validate(errors, block, file) {
         names.add(lane.name);
         if (lane.name.length > MAX_NAME) ctx.at(ptr(lp, "name"), `expected a name of at most ${MAX_NAME} characters, got ${lane.name.length}`);
       }
-      if (!wantNonEmptyArray(ctx, lane.segs, ptr(lp, "segs"), "at least one segment")) return;
+      if (tooMany(ctx, lane.segs, ptr(lp, "segs"), 200, "segments") || !wantNonEmptyArray(ctx, lane.segs, ptr(lp, "segs"), "at least one segment")) return;
       /** @type {{ from: number, to: number, k: number }[]} */
       const spans = [];
       lane.segs.forEach((seg, k) => {
@@ -105,7 +106,7 @@ export function validate(errors, block, file) {
     ctx.at("/lanes", `expected the segments to span at least ${MIN_EXTENT}, got ${t1 - t0}; rescale the units`);
   }
 
-  if (body.msgs === undefined || !wantArray(ctx, body.msgs, "/msgs", "an array of messages")) return;
+  if (body.msgs === undefined || tooMany(ctx, body.msgs, "/msgs", 100, "messages") || !wantArray(ctx, body.msgs, "/msgs", "an array of messages")) return;
   const extentKnown = t0 <= t1;
   body.msgs.forEach((msg, i) => {
     const mp = ptr("", "msgs", i);

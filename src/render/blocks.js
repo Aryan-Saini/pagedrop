@@ -18,7 +18,7 @@ import { escapeHtml } from "./parse.js";
 import { meter, renderChart, sparkline } from "./charts.js";
 import { COPY_SCRIPT, codeSprite, iconKey, pathButton, renderCode, renderDiff } from "./code.js";
 import { renderFlow, renderSequence } from "./diagram.js";
-import { DIAGRAMS } from "./diagrams/index.js";
+import { DIAGRAMS, renderDiagram } from "./diagrams/index.js";
 import { renderInlineMath, renderMathBlock, unescapeHtml } from "./math.js";
 import { MEDIA_SCRIPT, withFailPanels } from "./media.js";
 import { FILES_SCRIPT, renderFiles } from "./files.js";
@@ -191,7 +191,7 @@ export function renderBlock(block, ctx = newCtx()) {
     // .fence scopes the mock colour utilities to fence output; it is display:contents.
     case "html": return `<div class="fence">${withFailPanels(block.html, ctx)}</div>`;
     case "footnotes": return footnotes(block);
-    default: return Object.hasOwn(DIAGRAMS, block.type) ? DIAGRAMS[block.type].render(block) : "";
+    default: return Object.hasOwn(DIAGRAMS, block.type) ? renderDiagram(block) : "";
   }
 }
 

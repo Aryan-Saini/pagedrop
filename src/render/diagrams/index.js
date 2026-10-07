@@ -39,3 +39,27 @@ export const DIAGRAMS = /** @type {Record<string, DiagramModule>} */ ({
 });
 
 export { DIAGRAM_FENCES } from "./names.js";
+
+/**
+ * Bytes one diagram may take. The whole page is capped at 512 KB by the upload
+ * policy; a figure over this budget is reported at its own fence instead of as a
+ * page-level failure that names no block.
+ */
+export const FIGURE_BUDGET = 320 * 1024;
+
+/** @type {WeakMap<object, string>} */
+const drawn = new WeakMap();
+
+/**
+ * Render a diagram block once. The size check in `render()` and the page body
+ * both ask for the same block, so the markup is cached by block identity.
+ * @param {{ type: string, data: unknown }} block
+ */
+export function renderDiagram(block) {
+  let html = drawn.get(block);
+  if (html === undefined) {
+    html = DIAGRAMS[block.type].render(block);
+    drawn.set(block, html);
+  }
+  return html;
+}

@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { validateHtml } from "../html-policy.js";
 import { renderBody } from "./blocks.js";
 import { DIAGRAM_FENCES } from "./diagrams/names.js";
+import { DIAGRAMS, FIGURE_BUDGET, renderDiagram } from "./diagrams/index.js";
 import { normalize, validateDoc } from "./schema/index.js";
 import { escapeHtml, parseInfo, parseIr, parseMarkdown, slugify, splitFrontmatter } from "./parse.js";
 import { page } from "./shell.js";
@@ -75,6 +76,16 @@ export function render(input, opts = {}) {
   const doc = errors.length ? resolved.doc : normalize(resolved.doc);
 
   const ir = parsed.doc;
+  if (errors.length) return { html: null, errors, doc, ir };
+
+  for (const block of doc.blocks) {
+    if (!Object.hasOwn(DIAGRAMS, block.type)) continue;
+    const bytes = new TextEncoder().encode(renderDiagram(block)).length;
+    if (bytes > FIGURE_BUDGET) {
+      errors.push({ file, line: block.line, block: block.type,
+        message: `renders to ${Math.round(bytes / 1024)} KB; one diagram may take ${FIGURE_BUDGET / 1024} KB of the 512 KB page, so split it or drop labels` });
+    }
+  }
   if (errors.length) return { html: null, errors, doc, ir };
 
   const html = page({ title: doc.meta.tab ?? doc.meta.title, body: renderBody(doc), generator: GENERATOR, icon: doc.meta.icon });
