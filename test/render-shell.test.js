@@ -366,3 +366,13 @@ test("examples/gallery.md renders with no errors", () => {
 test("an unknown block type renders nothing rather than half a block", () => {
   assert.equal(renderBlock({ id: "x", line: 1, type: "nope" }), "");
 });
+
+test("print inverts the palette so no glyph prints white on paper", () => {
+  const print = CSS.slice(CSS.indexOf("@media print"));
+  // Every text colour is var(--ink), so remapping it is what makes the page legible.
+  assert.match(print, /--ink:#000/);
+  assert.match(print, /color-scheme:light/, "a dark scheme paints the page margins black");
+  // Figures keep their dark palette and print inverted, so tinted nodes do not end up black-on-navy.
+  assert.match(print, /svg\.chart\{--ink:#fff;[^}]*filter:invert\(1\) hue-rotate\(180deg\)\}/);
+  assert.match(print, /break-inside:avoid/);
+});

@@ -117,7 +117,7 @@ kbd{font:.85em var(--mono);background:var(--surface-2);border:1px solid var(--li
 .note{display:grid;grid-template-columns:82px minmax(0,1fr);gap:12px;align-items:start;
   border-left:3px solid #4a4a46;padding:4px 0 4px 16px;margin:0 0 16px}
 .note .tag{font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink);
-  padding-top:5px;white-space:nowrap}
+  padding-top:5px;overflow-wrap:break-word}
 .note p{margin:0}
 .note.good{border-left-color:var(--good)} .note.good .tag{color:var(--good)}
 .note.warn{border-left-color:var(--warn)} .note.warn .tag{color:var(--warn)}
@@ -453,9 +453,42 @@ ol.footnotes a.fn-back:hover{color:var(--ink)}
   .fc-main{flex-basis:calc(100% - 36px)}
   .fc-actions{flex-basis:100%;justify-content:flex-start;padding-left:36px}
 }
+/* ---- paper: the same palette inverted, so every var(--ink) glyph prints black on white ---- */
+@page{size:auto;margin:14mm 13mm}
 @media print{
-  body{background:#fff;color:#000}
-  .contents{display:none}
+  :root{color-scheme:light;--bg:#fff;--surface:#f2f2ef;--surface-2:#e8e8e4;--line:#d4d4cf;--line-strong:#9a9a94;--ink:#000;
+    --mark:#6f6f6a;--grid:#dcdcd7;--axis:#9a9a94;--warn:#a86b00}
+  html,body{background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{font-size:11.5pt;line-height:1.45}
+  .wrap{max-width:none;padding:0}
+  h1{font-size:24pt;margin-top:0}
+  .contents,.code-tools,.cx-set,.cx-reset,.slides .arrow,.lightbox,.sprite,.fc-actions,.mf-actions,
+  button.copy{display:none!important}
+  a{color:#0b4fb3}
+  /* Dark-only fills: chips, pills and the done box take the light surface. */
+  .chip,.fc-pill,.fence .pill{background:var(--surface-2)}
+  ul.tasks li.done .box{background:#9a9a94;border-color:#9a9a94}
+  .note{border-left-color:#9a9a94}
+  /* Syntax tokens darkened to hold contrast on the light surface. */
+  .code pre,.t-punc,.diff-lines li{color:#2b2b2b}
+  .t-kw{color:#7a2fa0} .t-str,.t-regex{color:#2d6b16} .t-num,.t-const,.t-attr,.t-flag{color:#9a4f00}
+  .t-fn{color:#1d5bb8} .t-type,.t-meta{color:#8a6100} .t-var,.t-this,.t-prop,.t-key,.t-tag{color:#b3262f}
+  .t-op,.t-esc{color:#0d7480} .t-com{color:#5f5f5a}
+  .diff-lines .d-add{color:#2d6b16;background:#e6f2df} .diff-lines .d-del{color:#b3262f;background:#f7e1e2}
+  /* Figures keep their dark palette and print inverted: black planes turn white, white glyphs
+     black, and hue-rotate puts the series and tone colours back on their own hue. */
+  svg.chart{--ink:#fff;--mark:#898781;--grid:#2c2c2a;--axis:#383835;--surface:#1a1a19;--line:#2c2c2a;
+    --line-strong:#383835;filter:invert(1) hue-rotate(180deg)}
+  /* Everything prints at the page width: no sideways scrolling on paper. */
+  .tbl-wrap,.fig-scroll,.code pre{overflow:visible}
+  svg.chart{min-width:0!important;max-width:100%}
+  .code pre{white-space:pre-wrap;overflow-wrap:anywhere}
+  .code pre > code{width:auto}
+  /* Keep a block in one piece and a heading with what follows it. */
+  h1,h2,h3,h4{break-after:avoid;page-break-after:avoid}
+  .fig,.note,.code,.stat,.hero,img,svg,tr,.file,.timeline li{break-inside:avoid;page-break-inside:avoid}
+  thead{display:table-header-group}
+  p,li{orphans:3;widows:3}
 }
 `;
 
