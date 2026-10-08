@@ -1035,7 +1035,8 @@ export function scatter(points, {
 
 /** The legend keys for whichever scatter annotations are on, classed so a control hides key and mark together. */
 export function annotationKeys({ pareto = "", quadrant = "" }) {
-  return (pareto ? `<span class="key k-pareto">${keyMark("line", "#fff", true)}Pareto frontier</span>` : "") +
+  // var(--ink), not white: the key sits outside the SVG, so on paper it follows the page palette.
+  return (pareto ? `<span class="key k-pareto">${keyMark("line", "var(--ink)", true)}Pareto frontier</span>` : "") +
     (quadrant ? `<span class="key k-quadrant"><span class="swatch" style="background:${GOOD};opacity:.5"></span>Most attractive quadrant</span>` : "");
 }
 

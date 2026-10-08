@@ -536,7 +536,8 @@ ol.footnotes a.fn-back:hover{color:var(--ink)}
   .code pre > code{width:auto}
   /* Keep a block in one piece and a heading with what follows it. */
   h1,h2,h3,h4{break-after:avoid;page-break-after:avoid}
-  .fig,.note,.code,.stat,.hero,img,svg,tr,.file,.timeline li{break-inside:avoid;page-break-inside:avoid}
+  .fig,.cv,.note,.code,.stat,.hero,img,svg,tr,.file,.timeline li{break-inside:avoid;page-break-inside:avoid}
+  .fig-title,.cx-hd,.cx-tabs,.legend{break-after:avoid;page-break-after:avoid}
   thead{display:table-header-group}
   p,li{orphans:3;widows:3}
 }
