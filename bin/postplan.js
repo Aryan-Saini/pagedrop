@@ -20,13 +20,13 @@ import { formatError } from "../src/render/schema/index.js";
 // Single source of truth for the version: package.json. CI bumps it on every
 // merge to main, so a hardcoded copy here would immediately drift.
 const { version: VERSION, name: PACKAGE_NAME } = createRequire(import.meta.url)("../package.json");
-// The same code ships as `pagedrop` and `postplan-aryan`. Help and errors use the
+// The same code ships as `postdraft` and `postplan-aryan`. Help and errors use the
 // name it was invoked as: the npm bin link's basename, or the package name when
 // node runs this file directly (`node bin/postplan.js`, Windows shims).
 const invokedAs = path.basename(process.argv[1] ?? "");
 const CLI_NAME = invokedAs.endsWith(".js") ? PACKAGE_NAME : invokedAs;
 // No deployment is baked in: point the CLI at your own instance with
-// `pagedrop auth set <key> --api-url <url>`, or POSTPLAN_API_URL.
+// `postdraft auth set <key> --api-url <url>`, or POSTPLAN_API_URL.
 const DEFAULT_API_URL = process.env.POSTPLAN_API_URL || "https://postplan.dev";
 const POSTPLAN_DIR = path.join(os.homedir(), ".postplan");
 const CONFIG_PATH = path.join(POSTPLAN_DIR, "config.json");
