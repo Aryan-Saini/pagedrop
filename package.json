@@ -1,6 +1,6 @@
 {
   "name": "pagedrop",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Publish a self-contained HTML document and get a link back. Convex backend. Originally forked from postplan by t3dotgg.",
   "type": "module",
   "license": "MIT",
