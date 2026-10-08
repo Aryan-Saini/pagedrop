@@ -524,7 +524,7 @@ mark direction, status and series.
 
 - Figures are illustrative, generated for this gallery on Sep 22, 2026.
 - Palette: the eight-slot categorical set, validated against surface `#000000`.
-- Upload policy: `src/html-policy.js` in postplan-convex.[^policy]
+- Upload policy: `src/html-policy.js` in pagedrop.[^policy]
 
 [^measure]: The measure is 744px with 22px of side padding, so a line lands near 75 characters.
 [^policy]: The same validator the server runs, re-applied to the assembled document.

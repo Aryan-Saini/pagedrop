@@ -1,8 +1,9 @@
-# postplan-convex
+# pagedrop
 
-> **This repo is PUBLIC and its CLI is published to npm as `postplan-aryan`.**
+> **This repo is PUBLIC and its CLI is published to npm as `pagedrop` and
+> `postplan-aryan`** (same code, same version, via `pnpm release`).
 > Anything committed here is world-readable, and anything under `bin/` or `src/`
-> is downloaded by anyone who runs `npx postplan-aryan`.
+> is downloaded by anyone who runs `npx pagedrop` or `npx postplan-aryan`.
 >
 > **Never put in this repo:** deployment names or `*.convex.site` URLs, S3 bucket
 > or prefix names, IAM user names, AWS account ids, API keys, or anything from
