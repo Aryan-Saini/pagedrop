@@ -19,9 +19,14 @@ import { formatError } from "../src/render/schema/index.js";
 
 // Single source of truth for the version: package.json. CI bumps it on every
 // merge to main, so a hardcoded copy here would immediately drift.
-const { version: VERSION } = createRequire(import.meta.url)("../package.json");
+const { version: VERSION, name: PACKAGE_NAME } = createRequire(import.meta.url)("../package.json");
+// The same code ships as `pagedrop` and `postplan-aryan`. Help and errors use the
+// name it was invoked as: the npm bin link's basename, or the package name when
+// node runs this file directly (`node bin/postplan.js`, Windows shims).
+const invokedAs = path.basename(process.argv[1] ?? "");
+const CLI_NAME = invokedAs.endsWith(".js") ? PACKAGE_NAME : invokedAs;
 // No deployment is baked in: point the CLI at your own instance with
-// `postplan-aryan auth set <key> --api-url <url>`, or POSTPLAN_API_URL.
+// `pagedrop auth set <key> --api-url <url>`, or POSTPLAN_API_URL.
 const DEFAULT_API_URL = process.env.POSTPLAN_API_URL || "https://postplan.dev";
 const POSTPLAN_DIR = path.join(os.homedir(), ".postplan");
 const CONFIG_PATH = path.join(POSTPLAN_DIR, "config.json");
@@ -52,8 +57,8 @@ function guessType(name) {
 const program = new Command();
 
 program
-  .name("postplan")
-  .description("Upload static HTML drafts to Postplan.")
+  .name(CLI_NAME)
+  .description("Publish a self-contained HTML document and get a link back.")
   .version(VERSION);
 
 // Installed skills follow the CLI: before any command, a bundle that changed since
@@ -64,12 +69,12 @@ program.hook("preAction", (_program, action) => {
   try {
     const refreshed = updateIfStale({ statePath: SKILLS_STATE_PATH, version: VERSION });
     if (refreshed?.length) {
-      console.error(`postplan: updated the installed skills to ${VERSION}:`);
+      console.error(`${CLI_NAME}: updated the installed skills to ${VERSION}:`);
       for (const file of refreshed) console.error(`  ${file}`);
       console.error("Re-read the SKILL.md of the skill you are using before you continue; its instructions may have changed.");
     }
   } catch (err) {
-    console.error(`postplan: could not update the installed skills: ${err.message}`);
+    console.error(`${CLI_NAME}: could not update the installed skills: ${err.message}`);
   }
 });
 
@@ -79,7 +84,7 @@ skillsCommand
   .command("install")
   .description("Copy the bundled skills into your agent's skills folder. They update themselves after that.")
   .option("--dir <path...>", "Skills folder(s) to install into (default: ~/.claude/skills and/or ~/.agents/skills)")
-  .option("--force", "Replace same-named skill folders that postplan did not install")
+  .option("--force", `Replace same-named skill folders that ${CLI_NAME} did not install`)
   .action((options) => {
     const roots = (options.dir ?? defaultRoots()).map((dir) => path.resolve(dir.replace(/^~(?=$|\/)/, os.homedir())));
     const { installed, skipped } = installSkills({ roots, version: VERSION, force: options.force });
@@ -450,7 +455,7 @@ const assetCommand = program
   .option("--json", "Print {url, slug, visibility, expiresAt, key}")
   .option("--api-url <url>", "Override the default API base URL")
   .action(async (files, options) => {
-    if (!files.length) throw new CliError("Give at least one file: postplan asset <file> [<file>...]");
+    if (!files.length) throw new CliError(`Give at least one file: ${CLI_NAME} asset <file> [<file>...]`);
     const visibility = options.private ? "private" : "public";
     const project = options.project === undefined ? currentProject() : slugify(options.project);
     if (!project) throw new CliError(`--project needs letters or digits, got ${JSON.stringify(options.project)}`);
@@ -555,7 +560,7 @@ program
       return;
     }
     if (!assets.length) {
-      console.log("No assets yet. Publish one with: postplan asset <file>");
+      console.log(`No assets yet. Publish one with: ${CLI_NAME} asset <file>`);
       return;
     }
     const now = Date.now();
@@ -652,7 +657,7 @@ program
     }
 
     if (!drafts.length) {
-      console.log("No drafts yet. Publish one with: postplan upload <file>");
+      console.log(`No drafts yet. Publish one with: ${CLI_NAME} upload <file>`);
       return;
     }
 
@@ -744,7 +749,7 @@ function readAuth(apiUrlOverride, { requireApiKey = true } = {}) {
   const apiKey = process.env.POSTPLAN_API_KEY || credentials.apiKey;
 
   if (requireApiKey && !apiKey) {
-    throw new CliError("Missing API key. Run: postplan auth set <api-key>");
+    throw new CliError(`Missing API key. Run: ${CLI_NAME} auth set <api-key>`);
   }
 
   return { apiUrl, apiKey };

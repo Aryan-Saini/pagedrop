@@ -1,13 +1,17 @@
-# postplan-aryan
+# pagedrop
 
-Publish a self-contained HTML document and get a link back. A fork of
-[postplan](https://www.npmjs.com/package/postplan) (MIT, t3dotgg) with the
-express + Postgres + S3 server replaced by **Convex** functions and tables.
+Publish a self-contained HTML document and get a link back.
+
+> Originally forked from Theo's [postplan](https://www.npmjs.com/package/postplan) ([t3dotgg](https://github.com/t3dotgg)). Huge thanks to Theo for the idea and the original CLI, and for the HTML security policy, which still lives on here. Since then it has been heavily rebuilt: a new Convex backend, content-addressed storage, versioning and agent-first setup.
 
 ```bash
-npx postplan-aryan auth set <api-key> --api-url https://<your-deployment>.convex.site
-npx postplan-aryan upload plan.html
+npx pagedrop auth set <api-key> --api-url https://<your-deployment>.convex.site
+npx pagedrop upload plan.html
 ```
+
+Also published as [`postplan-aryan`](https://www.npmjs.com/package/postplan-aryan)
+with identical code: every release ships the same version under both names, so
+`npx postplan-aryan ...` keeps working exactly like `npx pagedrop ...`.
 
 No deployment is baked into the published package: the CLI reads `--api-url`,
 then `POSTPLAN_API_URL`, then `~/.postplan/config.json`. Point it at your own
@@ -18,7 +22,7 @@ instance.
 Paste this into Claude Code, Codex or any coding agent:
 
 ```text
-Set up postplan for me by following https://raw.githubusercontent.com/Aryan-Saini/postplan-convex/main/SETUP.md
+Set up pagedrop for me by following https://raw.githubusercontent.com/Aryan-Saini/pagedrop/main/SETUP.md
 ```
 
 [SETUP.md](SETUP.md) has the agent ask whether files go to Convex storage or S3,
@@ -33,8 +37,8 @@ approve the Convex login and answer that one question.
 package.
 
 ```bash
-npx postplan-aryan@latest skills install              # ~/.claude/skills and/or ~/.agents/skills
-npx postplan-aryan@latest skills install --dir <path> # anywhere else
+npx pagedrop@latest skills install              # ~/.claude/skills and/or ~/.agents/skills
+npx pagedrop@latest skills install --dir <path> # anywhere else
 ```
 
 A folder is only replaced if the installer wrote it, so a hand-maintained skill
@@ -57,8 +61,8 @@ backticked path in prose, like `convex/http.ts`, renders as a chip that copies i
 only script a document carries, and a document with neither code nor paths has none.
 
 ```bash
-npx postplan-aryan render plan.md              # writes plan.html
-npx postplan-aryan upload plan.md              # renders, then publishes
+npx pagedrop render plan.md    # writes plan.html
+npx pagedrop upload plan.md    # renders, then publishes
 ```
 
 A document is frontmatter, prose, and fences whose info string names a block:
@@ -98,13 +102,13 @@ the date, then a countdown inside 48 hours, and once it passes the card says the
 dead Download. The icons come from material-icon-theme (MIT), Lucide (ISC) and simple-icons (CC0), copied in by
 `scripts/file-icons.mjs`; the /s/ send page uses the same set.
 
-The full grammar — every block kind, its JSON shape, and the error messages —
+The full grammar (every block kind, its JSON shape, and the error messages)
 lives in the `html-communication` skill's `SKILL.md`. `examples/gallery.md`
 renders one of everything and is the fixture the tests check.
 
 ## Where uploads go
 
-Uploads go to whichever instance you configured — **not** `postplan.dev`. Run
+Uploads go to whichever instance you configured, **not** `postplan.dev`. Run
 `auth set` once per machine; without it the CLI falls back to `postplan.dev`,
 which is somebody else's server.
 
@@ -134,7 +138,7 @@ looking the way it did.
 `versions` lists them all, and takes a draft id or any of its URLs:
 
 ```bash
-npx postplan-aryan versions https://<deployment>.convex.site/d/<id>
+npx pagedrop versions https://<deployment>.convex.site/d/<id>
 ```
 
 It prints the version, date, bytes, uploader, git commit (when uploaded from a
@@ -147,10 +151,10 @@ repo) and URL of each, newest first. `--json` prints the raw response from
 to paste into a PR, a README or a `file` fence.
 
 ```bash
-npx postplan-aryan@latest asset shot.png                 # public, permanent
-npx postplan-aryan@latest asset export.csv --private     # stable /a/ link
-npx postplan-aryan@latest asset app.ipa                  # 7 days, plus an iOS install page
-npx postplan-aryan@latest asset a.png b.mp4 --project laborhutt --expires 24h --json
+npx pagedrop@latest asset shot.png                 # public, permanent
+npx pagedrop@latest asset export.csv --private     # stable /a/ link
+npx pagedrop@latest asset app.ipa                  # 7 days, plus an iOS install page
+npx pagedrop@latest asset a.png b.mp4 --project laborhutt --expires 24h --json
 ```
 
 - **Name.** The basename lowercased and hyphenated, with 8 random chars before the
@@ -186,8 +190,8 @@ npx postplan-aryan@latest asset a.png b.mp4 --project laborhutt --expires 24h --
 adds `install`), or an array of those for several.
 
 ```bash
-npx postplan-aryan assets                 # newest first: project, name, visibility, size, expires, url
-npx postplan-aryan asset rm <slug|url>    # deletes the object and its record
+npx pagedrop assets                 # newest first: project, name, visibility, size, expires, url
+npx pagedrop asset rm <slug|url>    # deletes the object and its record
 ```
 
 The CLI asks `POST /api/assets/sign` for a presigned PUT, sends the bytes straight
@@ -295,3 +299,22 @@ Two changes can alter what an existing document renders:
 - `src/html-policy.js` is unchanged apart from `Buffer.byteLength` becoming
   `TextEncoder`, since Convex is V8 without Node globals. It is still enforced
   server side.
+
+## Releasing
+
+```bash
+pnpm release minor   # or patch, major, x.y.z
+```
+
+Bumps the version once, commits and tags it on `main`, pushes, then publishes
+that version as both `pagedrop` and `postplan-aryan`. If one publish fails, run
+the same command with the new version number (`pnpm release 0.11.0`) to publish
+only the missing name. See `scripts/release.mjs`.
+
+## Acknowledgements
+
+pagedrop started as a fork of [postplan](https://www.npmjs.com/package/postplan)
+by Theo ([t3dotgg](https://github.com/t3dotgg)), MIT licensed. The idea, the
+original CLI and the HTML security policy in `src/html-policy.js` are his.
+The upstream source is the npm package itself (there is no public repo); the
+first commit here vendors postplan 0.0.4 from npm unmodified. Thank you, Theo.

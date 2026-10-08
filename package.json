@@ -1,7 +1,7 @@
 {
-  "name": "postplan-aryan",
+  "name": "pagedrop",
   "version": "0.10.0",
-  "description": "Publish a self-contained HTML document and get a link. Convex + S3 backend. Fork of postplan (MIT, t3dotgg).",
+  "description": "Publish a self-contained HTML document and get a link back. Convex backend. Originally forked from postplan by t3dotgg.",
   "type": "module",
   "license": "MIT",
   "files": [
@@ -12,12 +12,13 @@
     "README.md"
   ],
   "bin": {
-    "postplan-aryan": "./bin/postplan.js"
+    "pagedrop": "./bin/postplan.js"
   },
   "scripts": {
     "deploy": "convex deploy",
     "logs": "convex logs --prod",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "release": "node scripts/release.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -33,9 +34,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Aryan-Saini/postplan-convex.git"
+    "url": "git+https://github.com/Aryan-Saini/pagedrop.git"
   },
-  "homepage": "https://github.com/Aryan-Saini/postplan-convex",
+  "homepage": "https://github.com/Aryan-Saini/pagedrop",
   "devDependencies": {
     "convex": "^1.43.0",
     "lucide-static": "^1.47.0",
