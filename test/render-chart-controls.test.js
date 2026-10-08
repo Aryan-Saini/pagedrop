@@ -208,3 +208,11 @@ test("review: identical data draws identical bubbles in every view", () => {
   assert.equal(radii.length, 2);
   assert.equal(radii[0], radii[1]);
 });
+
+test("review: the shared legend needs the same annotations in every view, and a repeated scale is fine", () => {
+  const base = { series: [{ name: "A", points: [[1, 2], [2, 3]] }, { name: "B", points: [[3, 4]] }], controls: ["legend"] };
+  assert.deepEqual(errs("scatter", { ...base, views: [{ label: "Plain" }, { label: "Annotated", pareto: "top-left" }] }),
+    ["chart scatter: /controls/0 legend needs pareto on every view or on none; one legend names it for all of them"]);
+  assert.deepEqual(errs("scatter", { ...base, pareto: "top-left", views: [{ label: "L" }, { label: "R", pareto: "top-right" }] }), []);
+  assert.deepEqual(errs("scatter", { points: [{ x: 1, y: 1 }], views: [{ label: "A" }, { label: "B", xScale: "linear" }], controls: ["log-x"] }), []);
+});

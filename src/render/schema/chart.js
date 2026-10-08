@@ -725,7 +725,8 @@ function controlled(ctx, kind, body) {
   for (const [control, key] of /** @type {const} */ ([["log-x", "xScale"], ["log-y", "yScale"]])) {
     if (!controls.includes(control)) continue;
     views.forEach((v, i) => {
-      if (v[key] !== undefined) ctx.at(ptr("", "views", i, key), `cannot change per view while ${control} switches it for every view; set ${key} once on the chart`);
+      // Repeating the chart's own scale changes nothing, so only a different one is an error.
+      if (v[key] !== undefined && v[key] !== (body[key] ?? "linear")) ctx.at(ptr("", "views", i, key), `cannot change per view while ${control} switches it for every view; set ${key} once on the chart`);
     });
   }
   if (ctx.errors.length > start) return;
@@ -846,6 +847,13 @@ function needs(ctx, kind, controls, panels) {
       if (panels.some((p) => keys(p).join("\u0000") !== first.join("\u0000"))) {
         ctx.at(at, "legend needs the same series, in the same order and with the same tone and dashes, in every view; one legend switches them all");
         return;
+      }
+      // The shared legend also carries the annotation keys, so every view draws the same annotations.
+      for (const k of ["pareto", "quadrant"]) {
+        if (panels.some((p) => (p.data[k] === undefined) !== (panels[0].data[k] === undefined))) {
+          ctx.at(at, `legend needs ${k} on every view or on none; one legend names it for all of them`);
+          return;
+        }
       }
     }
   }
