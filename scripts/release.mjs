@@ -3,7 +3,7 @@
  * `pnpm release <patch|minor|major|x.y.z> [--otp=<code>]`
  *
  * Publishes one version of this repo under every name in NAMES. package.json
- * is `pagedrop`; the other names are made by packing once, unpacking a copy per
+ * is `postdraft`; the other names are made by packing once, unpacking a copy per
  * name and rewriting only `name` and `bin` in the copy. Every name ships the
  * same tarball contents and the repo never holds a second package.json, so the
  * packages cannot drift.
@@ -21,7 +21,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Every npm name this repo publishes under. The first is package.json's. */
-const NAMES = ["pagedrop", "postplan-aryan"];
+const NAMES = ["postdraft", "postplan-aryan"];
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [bump, ...rest] = process.argv.slice(2);
@@ -50,7 +50,7 @@ if (bump !== version) {
   run("git", ["push", "origin", "main", `v${version}`], { stdio: "inherit" });
 }
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pagedrop-release-"));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "postdraft-release-"));
 const tarball = path.join(tmp, run("npm", ["pack", "--pack-destination", tmp, "--silent"]).split("\n").pop());
 
 for (const name of NAMES) {

@@ -2,7 +2,7 @@
 name: send-file-link
 description: When the user wants a downloadable link to files, images, videos or PDFs so they or someone else can preview and download them on another device, like a phone, use skill.
 metadata:
-  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/pagedrop)"
+  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/postdraft)"
 ---
 
 # Send file link

@@ -2,7 +2,7 @@
 name: file-upload
 description: When a screenshot, video, picture, recording or build already on the machine needs a permanent URL to embed in a document, PR, issue or readme, use skill.
 metadata:
-  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/pagedrop)"
+  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/postdraft)"
 ---
 
 # File upload

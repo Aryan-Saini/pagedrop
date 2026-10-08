@@ -2,7 +2,7 @@
 name: html-communication
 description: When communicating a plan, spec, write-up, findings or UI mocks as a readable document, or when user says "create a doc", use skill.
 metadata:
-  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/pagedrop)"
+  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/postdraft)"
 ---
 
 # HTML Communication

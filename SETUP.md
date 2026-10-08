@@ -37,7 +37,7 @@ Convex storage) and wait.
 ## 2. Get the server code
 
 ```bash
-git clone https://github.com/Aryan-Saini/pagedrop.git ~/postplan-server
+git clone https://github.com/Aryan-Saini/postdraft.git ~/postplan-server
 cd ~/postplan-server
 npm install
 ```

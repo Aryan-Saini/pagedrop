@@ -1,5 +1,5 @@
 {
-  "name": "pagedrop",
+  "name": "postdraft",
   "version": "0.11.0",
   "description": "Publish a self-contained HTML document and get a link back. Convex backend. Originally forked from postplan by t3dotgg.",
   "type": "module",
@@ -12,7 +12,7 @@
     "README.md"
   ],
   "bin": {
-    "pagedrop": "./bin/postplan.js"
+    "postdraft": "bin/postplan.js"
   },
   "scripts": {
     "deploy": "convex deploy",
@@ -34,9 +34,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Aryan-Saini/pagedrop.git"
+    "url": "git+https://github.com/Aryan-Saini/postdraft.git"
   },
-  "homepage": "https://github.com/Aryan-Saini/pagedrop",
+  "homepage": "https://github.com/Aryan-Saini/postdraft",
   "devDependencies": {
     "convex": "^1.43.0",
     "lucide-static": "^1.47.0",

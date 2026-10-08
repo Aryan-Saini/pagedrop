@@ -2,7 +2,7 @@
 name: request-upload-link
 description: When the user needs to upload files from a phone or another device, or collect files from someone else, use skill.
 metadata:
-  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/pagedrop)"
+  requires: "npx, and postplan-aryan auth in ~/.postplan (see SETUP.md in Aryan-Saini/postdraft)"
 ---
 
 # Request upload link
