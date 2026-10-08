@@ -20,7 +20,7 @@ import { validateHtml } from "../html-policy.js";
 import { renderBody } from "./blocks.js";
 import { DIAGRAM_FENCES } from "./diagrams/names.js";
 import { DIAGRAMS, FIGURE_BUDGET, drawOnce, renderDiagram, withDiagramCache } from "./diagrams/index.js";
-import { renderChart } from "./charts.js";
+import { renderChartBlock } from "./chart-controls.js";
 import { normalize, validateDoc } from "./schema/index.js";
 import { escapeHtml, parseInfo, parseIr, parseMarkdown, slugify, splitFrontmatter } from "./parse.js";
 import { page } from "./shell.js";
@@ -85,7 +85,7 @@ export function render(input, opts = {}) {
     for (const block of doc.blocks) {
       const isChart = block.type === "chart";
       if (!isChart && !Object.hasOwn(DIAGRAMS, block.type)) continue;
-      const markup = isChart ? drawOnce(block, () => renderChart(block)) : renderDiagram(block);
+      const markup = isChart ? drawOnce(block, () => renderChartBlock(block)) : renderDiagram(block);
       const bytes = new TextEncoder().encode(markup).length;
       if (bytes > FIGURE_BUDGET) {
         errors.push({ file, line: block.line, block: isChart ? `chart ${block.kind}` : block.type,

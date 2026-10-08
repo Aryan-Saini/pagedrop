@@ -310,7 +310,7 @@ test("a sparkline of one point is a dot", () => {
 test("a typo'd key is named rather than dropped", () => {
   assert.deepEqual(lines(doc('```chart columns\n{"lables":["a"],"values":[1]}\n```')), [
     "plan.md:7 chart columns: /labels expected an array of labels, got nothing",
-    'plan.md:7 chart columns: /lables unknown key "lables"; keys: title note caption format src labels values',
+    'plan.md:7 chart columns: /lables unknown key "lables"; keys: title note caption format src views controls labels values',
   ]);
 });
 
@@ -343,7 +343,7 @@ test("a chart with a src defers its rows to the side file", () => {
   clean(doc('```chart columns\n{"title":"T","format":"int","src":"data/x.json"}\n```'));
   one(
     '```chart columns\n{"src":"data/x.json","labels":["a"]}\n```',
-    'plan.md:7 chart columns: /labels unknown key "labels"; keys: title note caption format src',
+    'plan.md:7 chart columns: /labels unknown key "labels"; keys: title note caption format src views controls',
   );
 });
 

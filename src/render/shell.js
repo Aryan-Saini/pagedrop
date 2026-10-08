@@ -175,6 +175,56 @@ svg.chart.diagram{margin:0 auto}
 .key .stroke{width:14px;height:2px;border-radius:1px;display:inline-block}
 .spark{vertical-align:middle}
 
+/* ---- switchable charts: the state is in the form controls, :has() shows the matching panel ---- */
+.cx{position:relative}
+.cx-hd{position:relative;min-height:22px}
+.cx-hd .fig-title{padding:0 30px}
+.cx-set{position:absolute;right:0;top:0;z-index:4}
+/* Not the document's collapsible sections: no rules, no +/- marker. */
+.cx details.cx-set{border:0;padding:0}
+.cx-set summary::before{content:none}
+.cx-set summary{list-style:none;cursor:pointer;display:flex;padding:3px;opacity:.75}
+.cx-set summary::-webkit-details-marker{display:none}
+.cx-set summary:hover,.cx-set[open] summary{opacity:1}
+.cx-set summary:focus-visible{outline:2px solid #5c9cf0;outline-offset:2px;border-radius:4px}
+.cx-set summary svg{width:16px;height:16px;stroke:var(--ink);fill:none;stroke-width:1.6;stroke-linecap:round}
+.cx-set summary circle{fill:#000}
+.cx-set>.cx-pop{position:absolute;right:0;top:28px;margin:0;background:#000;border:1px solid var(--line-strong);padding:6px 14px 8px;
+  font-size:13.5px;min-width:200px;white-space:nowrap}
+.cx-row{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:6px 0;cursor:pointer}
+.cx-row + .cx-row{border-top:1px solid var(--line)}
+.cx-row input{appearance:none;-webkit-appearance:none;margin:0;width:12px;height:12px;border:1.5px solid var(--ink);
+  border-radius:2px;cursor:pointer;flex:none}
+.cx-row input:checked{background:var(--ink)}
+.cx-row input:focus-visible{outline:2px solid #5c9cf0;outline-offset:2px}
+.cx-reset{all:unset;cursor:pointer;margin-top:6px;font-size:13px;text-decoration:underline;text-underline-offset:4px}
+.cx-reset[hidden]{display:none}
+.cx-tabs{display:flex;gap:0 22px;flex-wrap:wrap;justify-content:center;border-bottom:1px solid var(--line-strong);
+  margin:4px 0 10px;font-size:14px}
+.cx-tabs label{cursor:pointer;position:relative}
+.cx-tabs span{display:block;padding:0 0 7px;margin-bottom:-1px;border-bottom:2px solid transparent;opacity:.6}
+.cx-tabs label:hover span{opacity:1}
+.cx-tabs input:checked+span{opacity:1;border-bottom-color:var(--ink)}
+.cx-tabs input:focus-visible+span{outline:2px solid #5c9cf0;outline-offset:2px}
+.cx-tabs input,.cx-legend input{position:absolute;opacity:0;width:1px;height:1px;margin:0}
+.cx-legend .key{cursor:pointer;position:relative}
+.cx-legend .key:has(input:not(:checked)){opacity:.4}
+.cx-legend .key:has(input:focus-visible){outline:2px solid #5c9cf0;outline-offset:2px}
+.chart .pl{font-size:11px}
+.cx:has(.ct[value="1"]:checked) .cv:not([data-v="1"]),.cx:has(.ct[value="2"]:checked) .cv:not([data-v="2"]),
+.cx:has(.ct[value="3"]:checked) .cv:not([data-v="3"]),.cx:has(.ct[value="4"]:checked) .cv:not([data-v="4"]),
+.cx:has(.ct[value="5"]:checked) .cv:not([data-v="5"]),.cx:has(.ct[value="0"]:checked) .cv:not([data-v="0"]),
+.cx:has(.co[data-k="log-x"]:checked) .cv[data-x="lin"],.cx:has(.co[data-k="log-x"]:not(:checked)) .cv[data-x="log"],
+.cx:has(.co[data-k="log-y"]:checked) .cv[data-y="lin"],.cx:has(.co[data-k="log-y"]:not(:checked)) .cv[data-y="log"],
+.cx:has(.co[data-k="sort"]:checked) .cv[data-o="as"],.cx:has(.co[data-k="sort"]:not(:checked)) .cv[data-o="val"],
+.cx:has(.co[data-k="table"]:checked) .cv:not([data-t]),.cx:not(:has(.co[data-k="table"]:checked)) .cv[data-t],
+.cx:has(.co[data-k="labels"]:not(:checked)) .k-labels,.cx:has(.co[data-k="pareto"]:not(:checked)) .k-pareto,
+.cx:has(.co[data-k="quadrant"]:not(:checked)) .k-quadrant,
+.cx:has(.cl[value="0"]:not(:checked)) [data-series="0"],.cx:has(.cl[value="1"]:not(:checked)) [data-series="1"],
+.cx:has(.cl[value="2"]:not(:checked)) [data-series="2"],.cx:has(.cl[value="3"]:not(:checked)) [data-series="3"],
+.cx:has(.cl[value="4"]:not(:checked)) [data-series="4"],.cx:has(.cl[value="5"]:not(:checked)) [data-series="5"],
+.cx:has(.cl[value="6"]:not(:checked)) [data-series="6"],.cx:has(.cl[value="7"]:not(:checked)) [data-series="7"]{display:none}
+
 /* ---- images and video ---- */
 /* A plain Markdown image (no zoom) otherwise renders at its natural width and overflows a phone column. */
 main img{max-width:100%;height:auto}

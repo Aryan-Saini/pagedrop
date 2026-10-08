@@ -222,16 +222,51 @@ function gridAndAxis(g, top, tk, fmt) {
 /** A dashed line key: the same 14px stroke, broken into 4px dashes. */
 const dashKey = (color) => `repeating-linear-gradient(90deg,${color} 0 4px,transparent 4px 7px)`;
 
-function legend(names, mark = "bar", colors = names.map((_, i) => seriesColor(i)), dashed = [], center = false) {
-  const key = (i) => mark === "line"
-    ? `<span class="stroke" style="background:${dashed[i] ? dashKey(colors[i]) : colors[i]}"></span>`
-    : `<span class="swatch" style="background:${colors[i]}"></span>`;
+/** The key mark for one legend entry: a line stroke (dashed for a reference series) or a swatch. */
+export const keyMark = (mark, color, dashed = false) => mark === "line"
+  ? `<span class="stroke" style="background:${dashed ? dashKey(color) : color}"></span>`
+  : `<span class="swatch" style="background:${color}"></span>`;
+
+/** `extra` is appended after the series keys: the scatter annotation keys. */
+function legend(names, mark = "bar", colors = names.map((_, i) => seriesColor(i)), dashed = [], center = false, extra = "") {
   return `<div class="legend"${center ? ` style="justify-content:center"` : ""}>` + names.map((nm, i) =>
-    `<span class="key">${key(i)}${esc(nm)}</span>`).join("") + `</div>`;
+    `<span class="key">${keyMark(mark, colors[i], dashed[i])}${esc(nm)}</span>`).join("") + extra + `</div>`;
 }
+
+/**
+ * Panel mode, set only while {@link chartParts} draws one view of a controlled
+ * chart: `frame` hands its pieces back instead of wrapping them in a figure,
+ * and `tag` marks each series with `data-series` so a legend can hide it.
+ * Rendering is synchronous, so the flag never leaks between charts.
+ * @type {{ parts: { svg: string, note: string, legend: string }[], tag: boolean } | null}
+ */
+let panel = null;
+
+/**
+ * Draw `draw()` in panel mode and return the pieces its `frame` call produced.
+ * @param {() => string} draw
+ * @param {boolean} tag
+ * @returns {{ svg: string, note: string, legend: string }}
+ */
+export function chartParts(draw, tag) {
+  panel = { parts: [], tag };
+  try {
+    draw();
+    return panel.parts[0] ?? { svg: "", note: "", legend: "" };
+  } finally {
+    panel = null;
+  }
+}
+
+/** ` data-series="i"` in panel mode with tagging on, else nothing. */
+const seriesAttr = (i) => (panel?.tag ? ` data-series="${i}"` : "");
 
 /** Figure wrapper: title above, legend under the title, note and caption below. */
 function frame(svg, title, note, legendHtml = "") {
+  if (panel) {
+    panel.parts.push({ svg, note, legend: legendHtml });
+    return "";
+  }
   return `<figure class="fig">` +
     (title ? `<figcaption class="fig-title">${esc(title)}</figcaption>` : "") +
     legendHtml +
@@ -645,6 +680,8 @@ export function lines(labels, series, {
   series.forEach((s, si) => {
     const color = colors[si];
     const ps = pixels[si];
+    const open = seriesAttr(si);
+    if (open) body += `<g${open}>`;
     const d = ps.map(([px, py], i) => `${i ? "L" : "M"}${n(px)},${n(py)}`).join(" ");
     if (area && series.length === 1) {
       body += `<path d="${d} L${n(ps[ps.length - 1][0])},${n(g.y1)} L${n(ps[0][0])},${n(g.y1)} Z" fill="${color}" opacity="0.10"/>`;
@@ -654,6 +691,7 @@ export function lines(labels, series, {
     if (xy) {
       // A long series would carry one hover target per point; the line names itself instead.
       body += `<path d="${d}" ${stroke}><title>${esc(s.name)}</title></path>`;
+      if (open) body += `</g>`;
       return;
     }
     body += `<path d="${d}" ${stroke}/>`;
@@ -665,6 +703,7 @@ export function lines(labels, series, {
     body += `<circle cx="${n(xOf(li))}" cy="${n(yOf(s.values[li]))}" r="4" fill="${color}" stroke="#000" stroke-width="2"/>`;
     body += `<text x="${n(xOf(li) + 10)}" y="${n(yOf(s.values[li]) + 4)}" class="val val-left"${inkStyle(TONE_INK[s.tone])}>` +
       `${esc(format(s.values[li]))}</text>`;
+    if (open) body += `</g>`;
   });
   body += refLabels;
   if (xAxis) {
@@ -873,19 +912,29 @@ export function waterfall(rows, {
 }
 
 /**
+/**
  * Scatter, optionally sized. points: [{ x, y, size?, label? }].
  * Two numeric axes; the size channel is the bubble area.
  *
- * `series: [{ name, points: [[x, y], ...], tone? }]` replaces `points` with
+ * `series: [{ name, points: [[x, y, label?], ...], tone? }]` replaces `points` with
  * coloured groups and a legend. `marks: [{ at: [x, y], label? }]` draws a
  * labelled cross at each point (a k-means centroid).
+ *
+ * Three annotations sit on top, each drawn in its own class so a chart
+ * control can hide it: `labels` names every labelled point beside its dot
+ * (a label that would collide is left to the hover text), `pareto` joins the
+ * points no other point beats toward the named corner, and `quadrant` shades
+ * that corner from the median of each axis.
  */
 export function scatter(points, {
   title = "", note = "", height = 280, xTitle = "", yTitle = "",
   fx = (v) => compact(v), fy = (v) => compact(v), color = SERIES[0],
   xScale = "linear", yScale = "linear",
-  series = /** @type {{ name: string, points: [number, number][], tone?: string }[]} */ ([]),
+  series = /** @type {{ name: string, points: [number, number, string?][], tone?: string }[]} */ ([]),
   marks = /** @type {{ at: [number, number], label?: string }[]} */ ([]),
+  labels = false,
+  pareto = /** @type {Corner | ""} */ (""),
+  quadrant = /** @type {Corner | ""} */ (""),
 } = {}) {
   const W = 720, H = height;
   const g = { x0: 0, x1: W - 16, y0: 16, y1: H - 42 };
@@ -900,12 +949,15 @@ export function scatter(points, {
     const { top, ticks: tk } = ticks(extent(vs)[1]);
     return { ticks: tk, frac: (v) => v / top, label: f };
   };
-  /** @type {number[]} */ const xv = [], yv = [];
+  /** Every plotted point, for the axes and the annotations. @type {{ x: number, y: number, label: string }[]} */
+  const all = [];
   if (series.length) {
-    for (const s of series) for (const p of s.points) { xv.push(p[0]); yv.push(p[1]); }
+    for (const s of series) for (const p of s.points) all.push({ x: p[0], y: p[1], label: p[2] ?? "" });
   } else {
-    for (const p of points) { xv.push(p.x); yv.push(p.y); }
+    for (const p of points) all.push({ x: p.x, y: p.y, label: p.label ?? "" });
   }
+  /** @type {number[]} */ const xv = [], yv = [];
+  for (const p of all) { xv.push(p.x); yv.push(p.y); }
   for (const m of marks) { xv.push(m.at[0]); yv.push(m.at[1]); }
   // Groups (an embedding, a feature space) have no natural zero, so their axes fit the cloud.
   /** @param {number[]} vs @param {string} scale @param {(v: number) => string} f */
@@ -918,7 +970,8 @@ export function scatter(points, {
   const ya = (series.length ? groupAxis : axisOf)(yv, yScale, fy);
   // A y title stands at x = 14, rotated; the tick labels keep clear of it.
   g.x0 = Math.max(58, Math.ceil(widest(ya.ticks.map(ya.label)) + 10 + (yTitle ? 22 : 0)));
-  const maxSize = Math.max(...points.map((p) => p.size ?? 1));
+  let maxSize = -Infinity;
+  for (const p of points) if ((p.size ?? 1) > maxSize) maxSize = p.size ?? 1;
   const xOf = (v) => g.x0 + xa.frac(v) * (g.x1 - g.x0);
   const yOf = (v) => g.y1 - ya.frac(v) * (g.y1 - g.y0);
 
@@ -931,11 +984,21 @@ export function scatter(points, {
     if (baseOf(xScale)) body += `<line x1="${n(xOf(t))}" y1="${n(g.y0)}" x2="${n(xOf(t))}" y2="${n(g.y1)}" class="grid"/>`;
     body += xTick(xOf(t), g.y1 + 18, xa.label(t));
   }
+  if (quadrant) body += quadrantRect(quadrant, g, xOf(median(all.map((p) => p.x))), yOf(median(all.map((p) => p.y))));
+  if (pareto) {
+    const front = frontier(all, pareto);
+    body += `<polyline class="k-pareto" points="${front.map((p) => `${n(xOf(p.x))},${n(yOf(p.y))}`).join(" ")}" ` +
+      `fill="none" stroke="#fff" stroke-width="1.5" stroke-dasharray="2 4" stroke-linecap="round"/>`;
+  }
   const colors = series.map((s, i) => TONE_INK[s.tone] ?? seriesColor(i));
   series.forEach((s, i) => {
-    // One title per group: a hover target per dot would cost more than the dots.
-    body += `<g fill="${colors[i]}" fill-opacity="0.6" stroke="${colors[i]}" stroke-width="1.2"><title>${esc(s.name)}</title>`;
-    for (const [x, y] of s.points) body += `<circle cx="${n(xOf(x))}" cy="${n(yOf(y))}" r="4.5"/>`;
+    // One title per group: a hover target per dot would cost more than the dots. A labelled dot names itself.
+    body += `<g fill="${colors[i]}" fill-opacity="0.6" stroke="${colors[i]}" stroke-width="1.2"${seriesAttr(i)}><title>${esc(s.name)}</title>`;
+    for (const [x, y, label] of s.points) {
+      body += label
+        ? `<circle cx="${n(xOf(x))}" cy="${n(yOf(y))}" r="4.5"><title>${esc(label)} · ${esc(s.name)} · ${esc(fx(x))}, ${esc(fy(y))}</title></circle>`
+        : `<circle cx="${n(xOf(x))}" cy="${n(yOf(y))}" r="4.5"/>`;
+    }
     body += `</g>`;
   });
   for (const p of series.length ? [] : points) {
@@ -957,11 +1020,86 @@ export function scatter(points, {
         `text-anchor="${right ? "start" : "end"}">${esc(m.label)}</text>`;
     }
   }
+  if (labels) body += pointLabels(all, xOf, yOf, g, W);
   body += `<line x1="${n(g.x0)}" y1="${n(g.y1)}" x2="${n(g.x1)}" y2="${n(g.y1)}" class="axis"/>`;
   if (xTitle) body += xTick((g.x0 + g.x1) / 2, H - 6, xTitle);
   if (yTitle) body += `<text transform="translate(14,${n((g.y0 + g.y1) / 2)}) rotate(-90)" class="tick" text-anchor="middle">${esc(yTitle)}</text>`;
+  const keys = annotationKeys({ pareto, quadrant });
   return frame(svgOpen(W, H, title || "scatter") + body + "</svg>", title, note,
-    series.length ? legend(series.map((s) => s.name), "bar", colors) : "");
+    series.length ? legend(series.map((s) => s.name), "bar", colors, [], false, keys) : keys ? `<div class="legend">${keys}</div>` : "");
+}
+
+/** @typedef {"top-left" | "top-right" | "bottom-left" | "bottom-right"} Corner */
+
+/** The legend keys for whichever scatter annotations are on, classed so a control hides key and mark together. */
+export function annotationKeys({ pareto = "", quadrant = "" }) {
+  return (pareto ? `<span class="key k-pareto">${keyMark("line", "#fff", true)}Pareto frontier</span>` : "") +
+    (quadrant ? `<span class="key k-quadrant"><span class="swatch" style="background:${GOOD};opacity:.5"></span>Most attractive quadrant</span>` : "");
+}
+
+/** Middle value of a non-empty list (the mean of the two middles for an even count). */
+function median(vs) {
+  const s = vs.slice().sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/** The shaded corner of the plot beyond the median of each axis, in pixels. */
+function quadrantRect(corner, g, mx, my) {
+  const [x0, x1] = corner.endsWith("left") ? [g.x0, mx] : [mx, g.x1];
+  const [y0, y1] = corner.startsWith("top") ? [g.y0, my] : [my, g.y1];
+  return `<rect class="k-quadrant" x="${n(x0)}" y="${n(y0)}" width="${n(Math.max(0, x1 - x0))}" height="${n(Math.max(0, y1 - y0))}" ` +
+    `fill="${GOOD}" fill-opacity="0.12"/>`;
+}
+
+/**
+ * The Pareto frontier toward `corner`: walking x from the better end, each
+ * point that beats every point before it on y. Returned in ascending x.
+ * @param {{ x: number, y: number }[]} pts
+ * @param {Corner} corner
+ */
+function frontier(pts, corner) {
+  const left = corner.endsWith("left"), up = corner.startsWith("top");
+  const s = pts.slice().sort((a, b) => (left ? a.x - b.x : b.x - a.x) || (up ? b.y - a.y : a.y - b.y));
+  const out = [];
+  let best = up ? -Infinity : Infinity;
+  for (const p of s) if (up ? p.y > best : p.y < best) { out.push(p); best = p.y; }
+  return left ? out : out.reverse();
+}
+
+/**
+ * Point labels, 11px beside each labelled dot. Tries right, left, above and
+ * below; a label that would overlap a dot or a placed label is dropped rather
+ * than drawn over, since its dot still names itself on hover.
+ */
+function pointLabels(all, xOf, yOf, g, W) {
+  const dots = all.map((p) => { const x = xOf(p.x), y = yOf(p.y); return [x - 4.5, y - 4.5, x + 4.5, y + 4.5]; });
+  /** @type {number[][]} */ const placed = [];
+  const hit = (b, skip) => {
+    if (b[0] < g.x0 - 2 || b[2] > W + 4 || b[1] < 0 || b[3] > g.y1 + 2) return true;
+    for (let i = 0; i < dots.length; i++) {
+      const d = dots[i];
+      if (i !== skip && d[0] < b[2] && b[0] < d[2] && d[1] < b[3] && b[1] < d[3]) return true;
+    }
+    for (const d of placed) if (d[0] < b[2] && b[0] < d[2] && d[1] < b[3] && b[1] < d[3]) return true;
+    return false;
+  };
+  let out = "";
+  all.forEach((p, i) => {
+    if (!p.label) return;
+    const x = xOf(p.x), y = yOf(p.y), w = textW(p.label, 11);
+    const cands = [
+      { x: x + 8, y: y + 4, a: "start", b: [x + 8, y - 6, x + 8 + w, y + 5] },
+      { x: x - 8, y: y + 4, a: "end", b: [x - 8 - w, y - 6, x - 8, y + 5] },
+      { x, y: y - 9, a: "middle", b: [x - w / 2, y - 19, x + w / 2, y - 8] },
+      { x, y: y + 17, a: "middle", b: [x - w / 2, y + 7, x + w / 2, y + 18] },
+    ];
+    const c = cands.find((k) => !hit(k.b, i));
+    if (!c) return;
+    placed.push(c.b);
+    out += `<text x="${n(c.x)}" y="${n(c.y)}" class="tick pl k-labels" text-anchor="${c.a}">${esc(p.label)}</text>`;
+  });
+  return out;
 }
 
 /**
@@ -1178,6 +1316,7 @@ export function renderChart(block) {
         xTitle: d.xTitle ?? "", yTitle: d.yTitle ?? "", fx: fmt, fy: fmt,
         xScale: d.xScale ?? "linear", yScale: d.yScale ?? "linear",
         series: d.series ?? [], marks: d.marks ?? [],
+        labels: d.labels === true, pareto: d.pareto ?? "", quadrant: d.quadrant ?? "",
       });
     case "funnel":
       return funnel(rowsOf(labels, values), base);
