@@ -15,7 +15,8 @@
  */
 
 import { escapeHtml } from "./parse.js";
-import { meter, renderChart, sparkline } from "./charts.js";
+import { meter, sparkline } from "./charts.js";
+import { CHART_SCRIPT, isControlled, renderChartBlock } from "./chart-controls.js";
 import { COPY_SCRIPT, codeSprite, iconKey, pathButton, renderCode, renderDiff } from "./code.js";
 import { renderFlow, renderSequence } from "./diagram.js";
 import { DIAGRAMS, drawOnce, renderDiagram } from "./diagrams/index.js";
@@ -33,13 +34,15 @@ import { fileSymbol } from "./filetypes.js";
  * file chip needs the copy script and the file glyph, and `media` that a
  * failure panel needs the media script and its icons, `slides` that a
  * slideshow needs the slides script and the chevrons, and `files` that a file
- * card needs the files script, with `fileIcons` the type glyphs its cards draw.
+ * card needs the files script, with `fileIcons` the type glyphs its cards draw,
+ * and `controls` that a switchable chart needs the chart script.
  * @typedef {{ lightboxes: string[], zoomCount: number, heading: string, chips: boolean, media: boolean,
- *   slides: boolean, files: boolean, fileIcons: Set<string> }} Ctx */
+ *   slides: boolean, files: boolean, controls: boolean, fileIcons: Set<string> }} Ctx */
 
 /** @returns {Ctx} */
 const newCtx = () => ({
-  lightboxes: [], zoomCount: 0, heading: "", chips: false, media: false, slides: false, files: false, fileIcons: new Set(),
+  lightboxes: [], zoomCount: 0, heading: "", chips: false, media: false, slides: false, files: false, controls: false,
+  fileIcons: new Set(),
 });
 
 /* ------------------------------------------------------------------ document */
@@ -51,8 +54,8 @@ const newCtx = () => ({
  * A document with code blocks, file chips, media or file cards also gets, once
  * each, the icon sprite they reference (top of the body) and the document
  * script (end of the body): the copy script, plus the media script when there
- * are failure panels, the slides script when there is a slideshow and the files
- * script when there are file cards. A document with none of them stays
+ * are failure panels, the slides script when there is a slideshow, the files
+ * script when there are file cards and the chart script when a chart has controls. A document with none of them stays
  * script-free. The sprite carries only the glyphs the document uses.
  *
  * @param {Doc} doc
@@ -90,7 +93,7 @@ export function renderBody(doc) {
 
   const wrap = `<div class="wrap"><main>\n${parts.filter(Boolean).join("\n")}\n</main></div>`;
   const code = blocks.filter((b) => b.type === "code" || b.type === "diff");
-  if (!code.length && !ctx.chips && !ctx.media && !ctx.slides && !ctx.files) return wrap;
+  if (!code.length && !ctx.chips && !ctx.media && !ctx.slides && !ctx.files && !ctx.controls) return wrap;
   const icons = code.map((b) => (b.type === "diff" ? "diff" : iconKey(b.lang)));
   if (code.length || ctx.media || ctx.files) icons.push("copy");
   if (ctx.chips || code.some((b) => b.file)) icons.push("file");
@@ -100,9 +103,12 @@ export function renderBody(doc) {
   // A type glyph may be a language icon a code block already put in the sprite.
   const have = new Set(icons);
   const glyphs = [...ctx.fileIcons].filter((k) => !have.has(k)).map((k) => fileSymbol(k, `icon-${k}`)).join("");
-  const script = [COPY_SCRIPT, ctx.media && MEDIA_SCRIPT, ctx.slides && SLIDES_SCRIPT, ctx.files && FILES_SCRIPT]
+  const script = [COPY_SCRIPT, ctx.media && MEDIA_SCRIPT, ctx.slides && SLIDES_SCRIPT, ctx.files && FILES_SCRIPT,
+    ctx.controls && CHART_SCRIPT]
     .filter(Boolean).join("\n");
-  return `${codeSprite(icons, glyphs)}\n${wrap}\n<script>${script}</script>`;
+  // A page whose only script is the chart one references no glyphs, so it gets no sprite.
+  const sprite = icons.length || glyphs ? `${codeSprite(icons, glyphs)}\n` : "";
+  return `${sprite}${wrap}\n<script>${script}</script>`;
 }
 
 /**
@@ -176,7 +182,9 @@ export function renderBlock(block, ctx = newCtx()) {
     }
     case "container":
       return `<div class="${escapeHtml(block.kind)}">\n${withFailPanels(fileChips(block.html, ctx), ctx)}\n</div>`;
-    case "chart": return drawOnce(block, () => renderChart(block));
+    case "chart":
+      if (isControlled(block.data)) ctx.controls = true;
+      return drawOnce(block, () => renderChartBlock(block));
     case "stats": return stats(block);
     case "hero": return hero(block);
     case "timeline": return timeline(block);

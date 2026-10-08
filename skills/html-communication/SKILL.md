@@ -124,7 +124,45 @@ The other thirteen kinds take that fence and envelope with this body:
 {"series":[{"name":"sports","points":[[1,2],[1.4,2.2]]},{"name":"finance","points":[[5,6],[5.3,5.8]]}],"marks":[{"at":[1.2,2.1],"label":"k1"}]}
 // schedule:  ISO dates, ticks fall on month boundaries
 {"tasks":[{"label":"Convex backend","start":"2026-08-14","end":"2026-08-29","done":true}]}
+// annotated scatter: a series point may be [x, y, "name"]; labels names them beside the dot
+//            (a label that would collide is left to hover); pareto joins the points nothing
+//            beats toward a corner; quadrant shades that corner from the median of each axis
+{"labels":true,"pareto":"top-left","quadrant":"top-left","series":[{"name":"Atlas","points":[[20,58,"Ultra"],[0.4,44,"Mini"]]}]}
 ```
+
+**Switchable charts.** When a reader should flip between metrics, scales or a
+table, add `views` and/or `controls` to any kind but `share`. `views` is 2 to 6
+tabs over one chart slot: each is a `label` plus the keys it changes (series,
+values, x, axis titles, scales, format, note; never the title). `controls` puts
+a settings icon top right with these switches:
+
+| Control | Kinds | Switches |
+| --- | --- | --- |
+| `log-x`, `log-y` | lines (log-x needs `x` or points), scatter | the axis between linear and log for every view; the chart's own scale is the default, and a view cannot set its own |
+| `sort` | bars, columns | authored order or largest first |
+| `labels`, `pareto`, `quadrant` | scatter | that annotation, which the body must already draw |
+| `legend` | lines, scatter, 2+ series with the same names, tones and dashes (and the same annotations) in every view | clicking a key hides that series and its point labels |
+| `table` | everything but whisker, heatmap, schedule, small-multiples | the plot for its numbers |
+
+````markdown
+```chart scatter
+{"title":"Intelligence vs cost and speed","yTitle":"Index","xTitle":"Cost (USD)","xScale":"log10",
+ "labels":true,"pareto":"top-left",
+ "series":[{"name":"Atlas","points":[[20,58,"Ultra"],[0.4,44,"Mini"]]},{"name":"Dune","points":[[0.9,52,"R2"]]}],
+ "views":[{"label":"vs Cost"},
+          {"label":"vs Speed","xTitle":"Tokens/s","pareto":"top-right",
+           "series":[{"name":"Atlas","points":[[52,58,"Ultra"],[190,44,"Mini"]]},{"name":"Dune","points":[[64,52,"R2"]]}]}],
+ "controls":["log-x","labels","pareto","legend","table"]}
+```
+````
+
+A view overrides keys but cannot remove one, so every view keeps the base
+shape: put `points` series in every view or in none. The Pareto frontier and
+quadrant cover every series, whichever are hidden. Every state is drawn ahead
+of time and switched with CSS, so it works with scripts off. Views times log toggles times sort is at most 12 charts; each
+panel is validated, and an error names the view and scale it came from
+(`chart lines (view "Val", log y): ...`). Use log as a toggle when only the
+scale changes and as its own view when it rides along with a different metric.
 
 ## 4 · Need a stat tile or a hero number
 
@@ -212,7 +250,9 @@ pairs, input and output labels 24 characters, names 40. `tensors` 12 stages,
 dims 1 to 1e6, ops and labels 24 characters. `trellis` 2 to 8 states, 16
 observations, labels 16 characters. `chart heatmap` 40 rows and cols; `chart
 lines` points and `chart scatter` series up to 1000 points each (2000 in a
-scatter), 8 refs, 32 marks; a linear axis spans or reaches at least 1e-300.
+scatter), 8 refs, 32 marks, 300 labelled points with labels up to 60 characters;
+a linear axis spans or reaches at least 1e-300. `views` 2 to 6, tab labels 40
+characters, 12 panels in all.
 
 ### flow and sequence
 

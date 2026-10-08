@@ -30,7 +30,7 @@ export const CHART_KINDS = /** @type {const} */ ([
 export const SCALES = /** @type {const} */ (["linear", "log2", "log10"]);
 
 /** Scatter carries its own axis titles and scales on top of the envelope. */
-const SCATTER_KEYS = ["points", "series", "marks", "xTitle", "yTitle", "xScale", "yScale"];
+const SCATTER_KEYS = ["points", "series", "marks", "xTitle", "yTitle", "xScale", "yScale", "labels", "pareto", "quadrant"];
 
 /** Keys `chart lines` accepts on top of the envelope. */
 const LINES_KEYS = ["labels", "x", "series", "area", "zeroFloor", "xScale", "yScale", "refs", "xTitle", "yTitle", "square"];
@@ -46,8 +46,13 @@ const MAX_CELLS_SIDE = 40;
 /** A linear axis keeps its values within this magnitude, so tick steps stay finite. */
 const LINEAR_LIMIT = 1e15;
 
+/** A scatter point label, drawn beside its dot. */
+const MAX_POINT_LABEL = 60;
+/** `labels: true` draws one text per labelled point; past this the plot is all text. */
+const MAX_LABELLED = 300;
+
 /** Keys every chart envelope carries regardless of kind. */
-const BASE_KEYS = ["title", "note", "caption", "format", "src"];
+const BASE_KEYS = ["title", "note", "caption", "format", "src", "views", "controls"];
 
 const KIND_SET = new Set(CHART_KINDS);
 
@@ -193,8 +198,13 @@ function onAxis(ctx, v, scale, axis, at) {
  * An `[x, y]` pair of finite numbers, each placeable on its axis.
  * @param {{ xScale?: unknown, yScale?: unknown }} scales
  */
-function pair(ctx, p, at, scales) {
-  if (!Array.isArray(p) || p.length !== 2) return ctx.at(at, `expected an [x, y] pair, got ${show(p)}`);
+function pair(ctx, p, at, scales, labelled = false) {
+  if (labelled && Array.isArray(p) && p.length === 3) {
+    if (typeof p[2] !== "string" || !p[2].trim()) return ctx.at(ptr(at, 2), `expected a point label, got ${show(p[2])}`);
+    if (p[2].length > MAX_POINT_LABEL) return ctx.at(ptr(at, 2), `expected a label of at most ${MAX_POINT_LABEL} characters, got ${p[2].length}`);
+  } else if (!Array.isArray(p) || p.length !== 2) {
+    return ctx.at(at, `expected an [x, y]${labelled ? " or [x, y, label]" : ""} pair, got ${show(p)}`);
+  }
   const xOk = wantNumber(ctx, p[0], ptr(at, 0)) && onAxis(ctx, p[0], scales.xScale, "x", ptr(at, 0));
   const yOk = wantNumber(ctx, p[1], ptr(at, 1)) && onAxis(ctx, p[1], scales.yScale, "y", ptr(at, 1));
   return xOk && yOk;
@@ -204,12 +214,12 @@ function pair(ctx, p, at, scales) {
  * A list of `[x, y]` pairs: capped, at least `min` long, each pair checked.
  * @returns {boolean} true when every pair checked out
  */
-function pairList(ctx, v, at, min, scales) {
+function pairList(ctx, v, at, min, scales, labelled = false) {
   if (tooMany(ctx, v, at, MAX_POINTS, "points")) return false;
   if (!wantArray(ctx, v, at, "an array of [x, y] pairs")) return false;
   if (v.length < min) return ctx.at(at, `expected at least ${min} [x, y] pair${min > 1 ? "s" : ""}, got ${v.length}`);
   let ok = true;
-  v.forEach((p, i) => { if (!pair(ctx, p, ptr(at, i), scales)) ok = false; });
+  v.forEach((p, i) => { if (!pair(ctx, p, ptr(at, i), scales, labelled)) ok = false; });
   return ok;
 }
 
@@ -331,7 +341,7 @@ function scatterSeries(ctx, body, scalesOk, marks) {
     const at = ptr("", "series", i);
     if (!wantObject(ctx, s, at, "a series { name, points }")) { ok = false; return; }
     wantText(ctx, s.name, ptr(at, "name"), "a series name");
-    if (pairList(ctx, s.points, ptr(at, "points"), 1, scales)) {
+    if (pairList(ctx, s.points, ptr(at, "points"), 1, scales, true)) {
       for (const [x, y] of /** @type {[number, number][]} */ (s.points)) { xs.push(x); ys.push(y); }
     } else ok = false;
     wantTone(ctx, s.tone, ptr(at, "tone"));
@@ -361,6 +371,32 @@ function marksOf(ctx, marks, scales, flat) {
     unknownKeys(ctx, m, at, ["at", "label"]);
   });
   return out;
+}
+
+/** Plot corners, for the scatter `pareto` and `quadrant` annotations. */
+export const CORNERS = /** @type {const} */ (["top-left", "top-right", "bottom-left", "bottom-right"]);
+
+/**
+ * Scatter `labels`, `pareto` and `quadrant`. `labels: true` needs something to
+ * name: a flat point's `label` or a series point's third element.
+ */
+function scatterAnnotations(ctx, body) {
+  optionalEnum(ctx, body.pareto, "/pareto", CORNERS);
+  optionalEnum(ctx, body.quadrant, "/quadrant", CORNERS);
+  if (!optionalBoolean(ctx, body.labels, "/labels") || body.labels !== true) return;
+  let count = 0;
+  if (Array.isArray(body.series)) {
+    for (const s of body.series) {
+      if (isObject(s) && Array.isArray(s.points)) for (const p of s.points) if (Array.isArray(p) && typeof p[2] === "string") count++;
+    }
+  } else if (Array.isArray(body.points)) {
+    for (const p of body.points) if (isObject(p) && typeof p.label === "string" && p.label) count++;
+  }
+  if (count === 0) {
+    ctx.at("/labels", "expected labelled points, got none; give flat points a label or series points a third element [x, y, \"name\"]");
+  } else if (count > MAX_LABELLED) {
+    ctx.at("/labels", `expected at most ${MAX_LABELLED} labelled points, got ${count}; label only the ones worth naming`);
+  }
 }
 
 /**
@@ -506,6 +542,7 @@ const KINDS = {
   scatter(ctx, body) {
     optionalString(ctx, body.xTitle, "/xTitle");
     optionalString(ctx, body.yTitle, "/yTitle");
+    scatterAnnotations(ctx, body);
     const scalesOk = optionalEnum(ctx, body.xScale, "/xScale", SCALES) && optionalEnum(ctx, body.yScale, "/yScale", SCALES);
     const xLog = scalesOk && body.xScale;
     const yLog = scalesOk && body.yScale;
@@ -593,6 +630,231 @@ export function validateChart(errors, block, file) {
     return;
   }
 
+  if (body.views !== undefined || body.controls !== undefined) {
+    controlled(ctx, kind, body);
+    return;
+  }
   const extra = KINDS[kind](ctx, body);
   unknownKeys(ctx, body, "", [...BASE_KEYS, ...extra]);
+}
+
+/* ------------------------------------------------------ views and controls */
+
+/**
+ * The switches a chart may offer. `log-x` / `log-y` flip an axis between
+ * linear and log; `sort` reorders bars by value; `labels`, `pareto` and
+ * `quadrant` show or hide that scatter annotation; `legend` lets the reader
+ * hide a series; `table` swaps the plot for its numbers.
+ */
+export const CONTROLS = /** @type {const} */ (["log-x", "log-y", "sort", "labels", "pareto", "quadrant", "legend", "table"]);
+
+/** The kinds each control applies to. */
+const CONTROL_KINDS = {
+  "log-x": ["lines", "scatter"],
+  "log-y": ["lines", "scatter"],
+  sort: ["columns", "bars"],
+  labels: ["scatter"],
+  pareto: ["scatter"],
+  quadrant: ["scatter"],
+  legend: ["lines", "scatter"],
+  table: ["columns", "bars", "lines", "grouped", "stacked", "delta", "funnel", "waterfall", "scatter"],
+};
+
+/** Tabs over one chart slot; more than this and the tab row wraps into a menu. */
+const MAX_VIEWS = 6;
+const MAX_VIEW_LABEL = 40;
+/** Every view times every scale and sort state is one pre-rendered SVG. */
+const MAX_PANELS = 12;
+/** A view overrides data, never the figure around it. */
+const VIEW_FIXED = ["title", "caption", "src", "views", "controls"];
+
+/** The other end of a log toggle: a log axis turns linear, a linear one log10. */
+const flipScale = (scale) => (isLog(scale) ? "linear" : "log10");
+
+/**
+ * Every pre-rendered body a controlled chart draws: one per view, doubled for
+ * each log toggle. `x` / `y` record that axis's state (`lin` or `log`) when it
+ * has a toggle, so the page can show the panel matching the reader's switches.
+ * Shared by the validator and the renderer, so both see exactly the same panels.
+ * `sort` variants are not listed: they are reorderings of a validated panel.
+ *
+ * @param {Record<string, unknown>} body
+ * @returns {{ v: number, label: string, x: string, y: string, data: Record<string, unknown> }[]}
+ */
+export function panelsOf(body) {
+  const controls = Array.isArray(body.controls) ? body.controls : [];
+  const { views, controls: _controls, ...base } = body;
+  const list = Array.isArray(views) && views.length ? views : [{}];
+  const axisStates = (on, scale) => (on ? [scale, flipScale(scale)] : [null]);
+  const tag = (scale) => (scale === null ? "" : isLog(scale) ? "log" : "lin");
+  /** @type {ReturnType<typeof panelsOf>} */ const out = [];
+  list.forEach((view, v) => {
+    const { label, ...over } = isObject(view) ? view : {};
+    const merged = { ...base, ...over };
+    for (const xs of axisStates(controls.includes("log-x"), merged.xScale)) {
+      for (const ys of axisStates(controls.includes("log-y"), merged.yScale)) {
+        const data = { ...merged };
+        if (xs !== null && xs !== merged.xScale) data.xScale = xs;
+        if (ys !== null && ys !== merged.yScale) {
+          data.yScale = ys;
+          // A log axis cannot reach zero, so the floor the author asked for on linear no longer applies.
+          if (isLog(ys)) delete data.zeroFloor;
+        }
+        out.push({ v, label: typeof label === "string" ? label : "", x: tag(xs), y: tag(ys), data });
+      }
+    }
+  });
+  return out;
+}
+
+/**
+ * A chart with `views` and/or `controls`. Checks both lists, then validates
+ * every panel as a chart in its own right. A panel's errors are labelled with
+ * its view and scales; one repeated by every panel is reported once.
+ */
+function controlled(ctx, kind, body) {
+  const start = ctx.errors.length;
+  if (kind === "share") {
+    ctx.at(body.views !== undefined ? "/views" : "/controls", "is not available on chart share; use bars for a switchable view");
+    return;
+  }
+  const views = viewsOf(ctx, kind, body.views);
+  const controls = controlsOf(ctx, kind, body.controls);
+  if (ctx.errors.length > start || !views || !controls) return;
+  // A log toggle switches its axis on every view at once, so a view cannot pick its own scale for it.
+  for (const [control, key] of /** @type {const} */ ([["log-x", "xScale"], ["log-y", "yScale"]])) {
+    if (!controls.includes(control)) continue;
+    views.forEach((v, i) => {
+      // Repeating the chart's own scale changes nothing, so only a different one is an error.
+      if (v[key] !== undefined && v[key] !== (body[key] ?? "linear")) ctx.at(ptr("", "views", i, key), `cannot change per view while ${control} switches it for every view; set ${key} once on the chart`);
+    });
+  }
+  if (ctx.errors.length > start) return;
+
+  const panels = panelsOf(body);
+  const count = panels.length * (controls.includes("sort") ? 2 : 1);
+  if (count > MAX_PANELS) {
+    ctx.at(controls.length ? "/controls" : "/views", `draws ${count} charts (every view times every log and sort state); at most ${MAX_PANELS}, so drop a view or a toggle`);
+    return;
+  }
+
+  // The keys a body of this kind may carry, for the unknown-key checks below.
+  const extra = KINDS[kind](new Ctx([], ctx.file, ctx.line, ctx.block), panels[0].data);
+  unknownKeys(ctx, body, "", [...BASE_KEYS, ...extra]);
+  views.forEach((v, i) => unknownKeys(ctx, v, ptr("", "views", i), ["label", "note", "format", ...extra]));
+  needs(ctx, kind, controls, panels);
+  if (ctx.errors.length > start) return;
+
+  // A fault every panel shares is the author's base data: reported once, unlabelled.
+  // One only some panels have is reported once, labelled with every panel that has it.
+  /** @type {Map<string, { error: import("../ir.js").RenderError, where: string[] }>} */
+  const found = new Map();
+  for (const p of panels) {
+    /** @type {import("../ir.js").RenderError[]} */ const sink = [];
+    KINDS[kind](new Ctx(sink, ctx.file, ctx.line, ctx.block), p.data);
+    const what = [
+      views.length ? `view ${JSON.stringify(p.label)}` : "",
+      p.x ? `${p.x === "log" ? "log" : "linear"} x` : "",
+      p.y ? `${p.y === "log" ? "log" : "linear"} y` : "",
+    ].filter(Boolean).join(", ");
+    for (const e of new Map(sink.map((e) => [e.message, e])).values()) {
+      const seen = found.get(e.message);
+      if (seen) seen.where.push(what);
+      else found.set(e.message, { error: e, where: [what] });
+    }
+  }
+  for (const { error, where } of found.values()) {
+    if (where.length === panels.length || !where[0]) { ctx.errors.push(error); continue; }
+    const shown = where.slice(0, 3).join("; ") + (where.length > 3 ? `; ${where.length - 3} more` : "");
+    ctx.errors.push({ ...error, block: `${ctx.block} (${shown})` });
+  }
+}
+
+/**
+ * `views: [{ label, ...overrides }]`, 2 to 6 of them with distinct labels.
+ * @returns {Record<string, unknown>[] | null} the views ([] when absent), or null when malformed
+ */
+function viewsOf(ctx, kind, views) {
+  if (views === undefined) return [];
+  if (tooMany(ctx, views, "/views", MAX_VIEWS, "views") || !wantArray(ctx, views, "/views", "an array of views")) return null;
+  if (views.length < 2) return ctx.at("/views", `expected at least 2 views, got ${views.length}; one view is the chart itself`) || null;
+  const labels = new Set();
+  let ok = true;
+  views.forEach((v, i) => {
+    const at = ptr("", "views", i);
+    if (!wantObject(ctx, v, at, "a view { label, ...keys it changes }")) { ok = false; return; }
+    if (!wantText(ctx, v.label, ptr(at, "label"), "a tab label")) ok = false;
+    else if (/** @type {string} */ (v.label).length > MAX_VIEW_LABEL) {
+      ok = ctx.at(ptr(at, "label"), `expected at most ${MAX_VIEW_LABEL} characters, got ${/** @type {string} */ (v.label).length}`);
+    } else if (labels.has(v.label)) ok = ctx.at(ptr(at, "label"), `expected a label of its own, got ${show(v.label)} again`);
+    else labels.add(v.label);
+    for (const k of VIEW_FIXED) {
+      if (v[k] !== undefined) ok = ctx.at(ptr(at, k), "cannot change per view; every view shares the chart's title and frame");
+    }
+    if (!wantFormat(ctx, v.format, ptr(at, "format"))) ok = false;
+    if (!optionalString(ctx, v.note, ptr(at, "note"))) ok = false;
+  });
+  return ok ? /** @type {Record<string, unknown>[]} */ (views) : null;
+}
+
+/**
+ * `controls: ["log-y", "table", ...]`, each once and each one this kind supports.
+ * @returns {string[] | null}
+ */
+function controlsOf(ctx, kind, controls) {
+  if (controls === undefined) return [];
+  if (tooMany(ctx, controls, "/controls", CONTROLS.length, "controls") || !wantArray(ctx, controls, "/controls", "an array of control names")) return null;
+  if (controls.length === 0) return ctx.at("/controls", `expected at least one of ${CONTROLS.join(" ")}, got an empty array; drop the key for a plain chart`) || null;
+  const seen = new Set();
+  let ok = true;
+  controls.forEach((c, i) => {
+    const at = ptr("", "controls", i);
+    if (!CONTROLS.includes(/** @type {never} */ (c))) ok = ctx.at(at, `expected one of ${CONTROLS.join(" ")}, got ${show(c)}`);
+    else if (!CONTROL_KINDS[/** @type {keyof typeof CONTROL_KINDS} */ (c)].includes(kind)) {
+      ok = ctx.at(at, `${c} is not available on chart ${kind}; it works on ${CONTROL_KINDS[/** @type {keyof typeof CONTROL_KINDS} */ (c)].join(", ")}`);
+    } else if (seen.has(c)) ok = ctx.at(at, `${c} is listed twice`);
+    seen.add(c);
+  });
+  return ok ? /** @type {string[]} */ (controls) : null;
+}
+
+/** What each control needs from every panel it switches. */
+function needs(ctx, kind, controls, panels) {
+  for (const c of controls) {
+    const at = ptr("", "controls", controls.indexOf(c));
+    if (c === "log-x" && kind === "lines" && panels.some((p) => p.data.x === undefined && !hasPointSeries(p.data))) {
+      ctx.at(at, "log-x needs a numeric x axis in every view; give x or series points");
+      return;
+    }
+    if (c === "labels" && panels.some((p) => p.data.labels !== true)) {
+      ctx.at(at, "labels has nothing to toggle; set labels: true");
+      return;
+    }
+    if ((c === "pareto" || c === "quadrant") && panels.some((p) => p.data[c] === undefined)) {
+      ctx.at(at, `${c} has nothing to toggle; give ${c} a corner, e.g. "top-left"`);
+      return;
+    }
+    if (c === "legend") {
+      // One legend is drawn for every view, so each key must describe its series in all of them.
+      const keys = (p) => (Array.isArray(p.data.series)
+        ? p.data.series.map((s) => (isObject(s) ? JSON.stringify([s.name, s.tone ?? "", s.dashed === true]) : ""))
+        : []);
+      const first = keys(panels[0]);
+      if (first.length < 2) {
+        ctx.at(at, "legend needs at least 2 series to hide one");
+        return;
+      }
+      if (panels.some((p) => keys(p).join("\u0000") !== first.join("\u0000"))) {
+        ctx.at(at, "legend needs the same series, in the same order and with the same tone and dashes, in every view; one legend switches them all");
+        return;
+      }
+      // The shared legend also carries the annotation keys, so every view draws the same annotations.
+      for (const k of ["pareto", "quadrant"]) {
+        if (panels.some((p) => (p.data[k] === undefined) !== (panels[0].data[k] === undefined))) {
+          ctx.at(at, `legend needs ${k} on every view or on none; one legend names it for all of them`);
+          return;
+        }
+      }
+    }
+  }
 }
