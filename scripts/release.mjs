@@ -30,7 +30,7 @@ const otp = rest.filter((arg) => arg.startsWith("--otp"));
 if (!bump) fail("Usage: pnpm release <patch|minor|major|x.y.z> [--otp=<code>]");
 
 const run = (cmd, args, opts = {}) =>
-  execFileSync(cmd, args, { cwd: root, encoding: "utf8", stdio: ["inherit", "pipe", "inherit"], ...opts }).trim();
+  (execFileSync(cmd, args, { cwd: root, encoding: "utf8", stdio: ["inherit", "pipe", "inherit"], ...opts }) ?? "").trim();
 const readPkg = () => JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 if (readPkg().name !== NAMES[0]) fail(`package.json name must be ${NAMES[0]}`);
