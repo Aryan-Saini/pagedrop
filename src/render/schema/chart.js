@@ -721,6 +721,14 @@ function controlled(ctx, kind, body) {
   const views = viewsOf(ctx, kind, body.views);
   const controls = controlsOf(ctx, kind, body.controls);
   if (ctx.errors.length > start || !views || !controls) return;
+  // A log toggle switches its axis on every view at once, so a view cannot pick its own scale for it.
+  for (const [control, key] of /** @type {const} */ ([["log-x", "xScale"], ["log-y", "yScale"]])) {
+    if (!controls.includes(control)) continue;
+    views.forEach((v, i) => {
+      if (v[key] !== undefined) ctx.at(ptr("", "views", i, key), `cannot change per view while ${control} switches it for every view; set ${key} once on the chart`);
+    });
+  }
+  if (ctx.errors.length > start) return;
 
   const panels = panelsOf(body);
   const count = panels.length * (controls.includes("sort") ? 2 : 1);
@@ -729,18 +737,20 @@ function controlled(ctx, kind, body) {
     return;
   }
 
+  // The keys a body of this kind may carry, for the unknown-key checks below.
+  const extra = KINDS[kind](new Ctx([], ctx.file, ctx.line, ctx.block), panels[0].data);
+  unknownKeys(ctx, body, "", [...BASE_KEYS, ...extra]);
+  views.forEach((v, i) => unknownKeys(ctx, v, ptr("", "views", i), ["label", "note", "format", ...extra]));
   needs(ctx, kind, controls, panels);
   if (ctx.errors.length > start) return;
 
   // A fault every panel shares is the author's base data: reported once, unlabelled.
-  // One only some panels have is reported once, labelled with the first panel that has it.
-  /** @type {Map<string, { error: import("../ir.js").RenderError, what: string, count: number }>} */
+  // One only some panels have is reported once, labelled with every panel that has it.
+  /** @type {Map<string, { error: import("../ir.js").RenderError, where: string[] }>} */
   const found = new Map();
-  let extra = /** @type {string[]} */ ([]);
   for (const p of panels) {
     /** @type {import("../ir.js").RenderError[]} */ const sink = [];
-    const keys = KINDS[kind](new Ctx(sink, ctx.file, ctx.line, ctx.block), p.data);
-    if (p === panels[0]) extra = keys;
+    KINDS[kind](new Ctx(sink, ctx.file, ctx.line, ctx.block), p.data);
     const what = [
       views.length ? `view ${JSON.stringify(p.label)}` : "",
       p.x ? `${p.x === "log" ? "log" : "linear"} x` : "",
@@ -748,15 +758,15 @@ function controlled(ctx, kind, body) {
     ].filter(Boolean).join(", ");
     for (const e of new Map(sink.map((e) => [e.message, e])).values()) {
       const seen = found.get(e.message);
-      if (seen) seen.count++;
-      else found.set(e.message, { error: e, what, count: 1 });
+      if (seen) seen.where.push(what);
+      else found.set(e.message, { error: e, where: [what] });
     }
   }
-  for (const { error, what, count } of found.values()) {
-    ctx.errors.push(count === panels.length || !what ? error : { ...error, block: `${ctx.block} (${what})` });
+  for (const { error, where } of found.values()) {
+    if (where.length === panels.length || !where[0]) { ctx.errors.push(error); continue; }
+    const shown = where.slice(0, 3).join("; ") + (where.length > 3 ? `; ${where.length - 3} more` : "");
+    ctx.errors.push({ ...error, block: `${ctx.block} (${shown})` });
   }
-  unknownKeys(ctx, body, "", [...BASE_KEYS, ...extra]);
-  views.forEach((v, i) => unknownKeys(ctx, v, ptr("", "views", i), ["label", "note", "format", ...extra]));
 }
 
 /**
@@ -780,6 +790,8 @@ function viewsOf(ctx, kind, views) {
     for (const k of VIEW_FIXED) {
       if (v[k] !== undefined) ok = ctx.at(ptr(at, k), "cannot change per view; every view shares the chart's title and frame");
     }
+    if (!wantFormat(ctx, v.format, ptr(at, "format"))) ok = false;
+    if (!optionalString(ctx, v.note, ptr(at, "note"))) ok = false;
   });
   return ok ? /** @type {Record<string, unknown>[]} */ (views) : null;
 }
@@ -791,6 +803,7 @@ function viewsOf(ctx, kind, views) {
 function controlsOf(ctx, kind, controls) {
   if (controls === undefined) return [];
   if (tooMany(ctx, controls, "/controls", CONTROLS.length, "controls") || !wantArray(ctx, controls, "/controls", "an array of control names")) return null;
+  if (controls.length === 0) return ctx.at("/controls", `expected at least one of ${CONTROLS.join(" ")}, got an empty array; drop the key for a plain chart`) || null;
   const seen = new Set();
   let ok = true;
   controls.forEach((c, i) => {
@@ -821,14 +834,17 @@ function needs(ctx, kind, controls, panels) {
       return;
     }
     if (c === "legend") {
-      const names = (p) => (Array.isArray(p.data.series) ? p.data.series.map((s) => (isObject(s) ? s.name : "")) : []);
-      const first = names(panels[0]);
+      // One legend is drawn for every view, so each key must describe its series in all of them.
+      const keys = (p) => (Array.isArray(p.data.series)
+        ? p.data.series.map((s) => (isObject(s) ? JSON.stringify([s.name, s.tone ?? "", s.dashed === true]) : ""))
+        : []);
+      const first = keys(panels[0]);
       if (first.length < 2) {
         ctx.at(at, "legend needs at least 2 series to hide one");
         return;
       }
-      if (panels.some((p) => names(p).join("\u0000") !== first.join("\u0000"))) {
-        ctx.at(at, "legend needs the same series names, in the same order, in every view; one legend switches them all");
+      if (panels.some((p) => keys(p).join("\u0000") !== first.join("\u0000"))) {
+        ctx.at(at, "legend needs the same series, in the same order and with the same tone and dashes, in every view; one legend switches them all");
         return;
       }
     }

@@ -182,7 +182,7 @@ svg.chart.diagram{margin:0 auto}
 .cx-set{position:absolute;right:0;top:0;z-index:4}
 /* Not the document's collapsible sections: no rules, no +/- marker. */
 .cx details.cx-set{border:0;padding:0}
-.cx-set summary::before{content:none}
+.cx details.cx-set summary::before{content:none}
 .cx-set summary{list-style:none;cursor:pointer;display:flex;padding:3px;opacity:.75}
 .cx-set summary::-webkit-details-marker{display:none}
 .cx-set summary:hover,.cx-set[open] summary{opacity:1}
@@ -217,7 +217,7 @@ svg.chart.diagram{margin:0 auto}
 .cx:has(.co[data-k="log-x"]:checked) .cv[data-x="lin"],.cx:has(.co[data-k="log-x"]:not(:checked)) .cv[data-x="log"],
 .cx:has(.co[data-k="log-y"]:checked) .cv[data-y="lin"],.cx:has(.co[data-k="log-y"]:not(:checked)) .cv[data-y="log"],
 .cx:has(.co[data-k="sort"]:checked) .cv[data-o="as"],.cx:has(.co[data-k="sort"]:not(:checked)) .cv[data-o="val"],
-.cx:has(.co[data-k="table"]:checked) .cv:not([data-t]),.cx:not(:has(.co[data-k="table"]:checked)) .cv[data-t],
+.cx:has(.co[data-k="table"]:checked) .cv:not([data-t]),.cx:has(.co[data-k="table"]:checked) .cx-legend,.cx:not(:has(.co[data-k="table"]:checked)) .cv[data-t],
 .cx:has(.co[data-k="labels"]:not(:checked)) .k-labels,.cx:has(.co[data-k="pareto"]:not(:checked)) .k-pareto,
 .cx:has(.co[data-k="quadrant"]:not(:checked)) .k-quadrant,
 .cx:has(.cl[value="0"]:not(:checked)) [data-series="0"],.cx:has(.cl[value="1"]:not(:checked)) [data-series="1"],

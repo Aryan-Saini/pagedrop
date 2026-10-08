@@ -138,10 +138,10 @@ a settings icon top right with these switches:
 
 | Control | Kinds | Switches |
 | --- | --- | --- |
-| `log-x`, `log-y` | lines (log-x needs `x` or points), scatter | the axis between linear and log; the authored scale is the default |
+| `log-x`, `log-y` | lines (log-x needs `x` or points), scatter | the axis between linear and log for every view; the chart's own scale is the default, and a view cannot set its own |
 | `sort` | bars, columns | authored order or largest first |
 | `labels`, `pareto`, `quadrant` | scatter | that annotation, which the body must already draw |
-| `legend` | lines, scatter, 2+ series named the same in every view | clicking a key hides that series |
+| `legend` | lines, scatter, 2+ series with the same names, tones and dashes in every view | clicking a key hides that series and its point labels |
 | `table` | everything but whisker, heatmap, schedule, small-multiples | the plot for its numbers |
 
 ````markdown
@@ -150,14 +150,16 @@ a settings icon top right with these switches:
  "labels":true,"pareto":"top-left",
  "series":[{"name":"Atlas","points":[[20,58,"Ultra"],[0.4,44,"Mini"]]},{"name":"Dune","points":[[0.9,52,"R2"]]}],
  "views":[{"label":"vs Cost"},
-          {"label":"vs Speed","xTitle":"Tokens/s","xScale":"linear","pareto":"top-right",
+          {"label":"vs Speed","xTitle":"Tokens/s","pareto":"top-right",
            "series":[{"name":"Atlas","points":[[52,58,"Ultra"],[190,44,"Mini"]]},{"name":"Dune","points":[[64,52,"R2"]]}]}],
  "controls":["log-x","labels","pareto","legend","table"]}
 ```
 ````
 
-Every state is drawn ahead of time and switched with CSS, so it works with
-scripts off. Views times log toggles times sort is at most 12 charts; each
+A view overrides keys but cannot remove one, so every view keeps the base
+shape: put `points` series in every view or in none. The Pareto frontier and
+quadrant cover every series, whichever are hidden. Every state is drawn ahead
+of time and switched with CSS, so it works with scripts off. Views times log toggles times sort is at most 12 charts; each
 panel is validated, and an error names the view and scale it came from
 (`chart lines (view "Val", log y): ...`). Use log as a toggle when only the
 scale changes and as its own view when it rides along with a different metric.

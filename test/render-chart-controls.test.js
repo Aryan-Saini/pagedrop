@@ -83,7 +83,7 @@ test("controls need something to switch, and the panel count is capped", () => {
     ["chart lines: /controls/0 log-x needs a numeric x axis in every view; give x or series points"]);
   const two = { ...SCATTER, views: [SCATTER.views[0], { label: "Renamed", series: [{ name: "Uno", points: PTS(1) }, SCATTER.series[1]] }] };
   assert.deepEqual(errs("scatter", two),
-    ["chart scatter: /controls/4 legend needs the same series names, in the same order, in every view; one legend switches them all"]);
+    ["chart scatter: /controls/4 legend needs the same series, in the same order and with the same tone and dashes, in every view; one legend switches them all"]);
   const six = Array.from({ length: 6 }, (_, i) => ({ label: `v${i}` }));
   assert.deepEqual(errs("scatter", { points: [{ x: 1, y: 1 }], views: six, controls: ["log-x"] }), []);
   assert.deepEqual(errs("scatter", { points: [{ x: 1, y: 1 }], views: six, controls: ["log-x", "log-y"] }),
@@ -107,7 +107,7 @@ test("a controlled chart draws one panel per state, wired to its inputs, and shi
   // 2 views x 2 x-scales, plus one table per view.
   assert.equal((html.match(/<div class="cv" data-v=/g) ?? []).length, 4);
   assert.equal((html.match(/<div class="cv" data-t /g) ?? []).length, 2);
-  assert.match(html, /<input type="radio" class="ct" name="cx3" value="0" checked><span>Cost<\/span>/);
+  assert.match(html, /<input type="radio" class="ct" name="cx1" value="0" checked><span>Cost<\/span>/);
   assert.match(html, /class="co" data-k="log-x">/, "the authored x is linear, so Log x starts off");
   assert.match(html, /class="co" data-k="labels" checked>/);
   assert.match(html, /class="cl" value="1" checked>/);
@@ -151,4 +151,60 @@ test("sort draws a by-value twin of each panel", () => {
   assert.deepEqual(errors, []);
   const val = html.slice(html.indexOf('data-o="val"'));
   assert.ok(val.indexOf(">b<") < val.indexOf(">c<") && val.indexOf(">c<") < val.indexOf(">a<"));
+});
+
+test("review: a view's envelope keys are validated, and a builtin name is never a format", () => {
+  const bars = { labels: ["a"], values: [1] };
+  assert.deepEqual(errs("bars", { ...bars, views: [{ label: "A" }, { label: "B", format: "__proto__" }] }),
+    ['chart bars: /views/1/format expected one of int compact usd pct ms, got "__proto__"']);
+  assert.deepEqual(errs("bars", { ...bars, views: [{ label: "A" }, { label: "B", note: {} }] }).length, 1);
+  assert.deepEqual(errs("bars", { ...bars, controls: [] }),
+    ["chart bars: /controls expected at least one of log-x log-y sort labels pareto quadrant legend table, got an empty array; drop the key for a plain chart"]);
+});
+
+test("review: a toggled axis keeps one scale for every view", () => {
+  assert.deepEqual(errs("scatter", { points: [{ x: 1, y: 1 }], views: [{ label: "A" }, { label: "B", xScale: "log10" }], controls: ["log-x"] }),
+    ["chart scatter: /views/1/xScale cannot change per view while log-x switches it for every view; set xScale once on the chart"]);
+});
+
+test("review: a legend key must describe its series the same way in every view", () => {
+  const recoloured = { ...SCATTER, views: [SCATTER.views[0], { label: "Red", series: [{ ...SCATTER.series[0], tone: "bad" }, SCATTER.series[1]] }] };
+  assert.match(errs("scatter", recoloured).join(), /same tone and dashes/);
+});
+
+test("review: unknown keys are reported even when a control lacks what it switches", () => {
+  assert.deepEqual(errs("scatter", { points: [{ x: 1, y: 1 }], foo: 1, controls: ["pareto"] }), [
+    'chart scatter: /foo unknown key "foo"; keys: title note caption format src views controls points series marks xTitle yTitle xScale yScale labels pareto quadrant',
+    'chart scatter: /controls/0 pareto has nothing to toggle; give pareto a corner, e.g. "top-left"',
+  ]);
+});
+
+test("review: a fault in some views names each of them", () => {
+  const lines = { x: [1, 2], series: [{ name: "s", values: [0, 2] }], controls: ["log-y"],
+    views: [{ label: "A" }, { label: "B", series: [{ name: "s", values: [0, 3] }] }, { label: "C", series: [{ name: "s", values: [1, 3] }] }] };
+  assert.deepEqual(errs("lines", lines),
+    ['chart lines (view "A", log y; view "B", log y): /series/0/values/0 expected a value > 0 on the log10 y axis, got 0']);
+});
+
+test("review: point labels follow their series out of the legend", () => {
+  const { body } = page("scatter", { series: [{ name: "A", points: [[1, 2, "a"], [2, 3, "b"]] }, { name: "B", points: [[2, 4, "c"], [3, 5, "d"]] }],
+    labels: true, controls: ["legend", "labels"] });
+  assert.match(body, /class="tick pl k-labels" data-series="0"[^>]*>b</);
+  assert.match(body, /class="tick pl k-labels" data-series="1"[^>]*>d</);
+});
+
+test("review: two charts on one line still get their own radio group", () => {
+  const chart = { type: "chart", kind: "bars", line: 1, data: { labels: ["a"], values: [1], views: [{ label: "A" }, { label: "B" }] } };
+  const out = render({ version: 1, meta: { title: "T" }, blocks: [chart, { ...chart }] }, { file: "t.json" });
+  assert.deepEqual(out.errors, []);
+  const names = new Set([...out.html.matchAll(/class="ct" name="(cx\d+)"/g)].map((m) => m[1]));
+  assert.equal(names.size, 2);
+});
+
+test("review: identical data draws identical bubbles in every view", () => {
+  const pts = [{ x: 1, y: 1, size: 0.01 }, { x: 2, y: 2 }];
+  const { body } = page("scatter", { points: pts, views: [{ label: "A" }, { label: "B", points: pts }] });
+  const radii = [...body.matchAll(/<div class="cv" data-v="(\d)"[\s\S]*?<\/svg>/g)].map((m) => [...m[0].matchAll(/ r="([\d.]+)"/g)].map((r) => r[1]).join());
+  assert.equal(radii.length, 2);
+  assert.equal(radii[0], radii[1]);
 });

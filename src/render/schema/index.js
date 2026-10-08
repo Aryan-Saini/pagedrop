@@ -174,22 +174,32 @@ export function normalize(doc) {
   };
 }
 
+/**
+ * Defaults for one chart body. Exported because a switchable chart's views
+ * are merged after normalize ran on the base, so each panel is normalized again.
+ * @param {string} kind
+ * @param {Record<string, any>} data
+ */
+export function normalizeChart(kind, data) {
+  const body = withDefaults(data, { ...CHART_DEFAULTS, ...CHART_EXTRAS[kind] });
+  if (kind === "schedule" && Array.isArray(body.tasks)) {
+    body.tasks = body.tasks.map((t) => withDefaults(t, { done: false, tone: "" }));
+  }
+  if (Array.isArray(body.series)) {
+    body.series = body.series.map((s) => withDefaults(s, { tone: "" }));
+  }
+  if (kind === "scatter" && Array.isArray(body.points)) {
+    body.points = body.points.map((p) => withDefaults(p, { label: "", size: 0 }));
+  }
+  return body;
+}
+
 /** @param {Block} block */
 function normalizeBlock(block) {
   switch (block.type) {
     case "chart": {
       if (!block.data || typeof block.data !== "object") return block;
-      const body = withDefaults(block.data, { ...CHART_DEFAULTS, ...CHART_EXTRAS[block.kind] });
-      if (block.kind === "schedule" && Array.isArray(body.tasks)) {
-        body.tasks = body.tasks.map((t) => withDefaults(t, { done: false, tone: "" }));
-      }
-      if (Array.isArray(body.series)) {
-        body.series = body.series.map((s) => withDefaults(s, { tone: "" }));
-      }
-      if (block.kind === "scatter" && Array.isArray(body.points)) {
-        body.points = body.points.map((p) => withDefaults(p, { label: "", size: 0 }));
-      }
-      return { ...block, data: body };
+      return { ...block, data: normalizeChart(block.kind, block.data) };
     }
 
     case "stats":

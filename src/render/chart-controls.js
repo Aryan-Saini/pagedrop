@@ -15,6 +15,7 @@
 
 import { TONE_INK, annotationKeys, chartParts, compact, esc, formatter, keyMark, renderChart, seriesColor } from "./charts.js";
 import { panelsOf } from "./schema/chart.js";
+import { normalizeChart } from "./schema/index.js";
 
 /** @typedef {import("./ir.js").ChartBlock} ChartBlock */
 
@@ -32,6 +33,14 @@ export const isControlled = (data) =>
 export function renderChartBlock(block) {
   return isControlled(block.data) ? controlledChart(block) : renderChart(block);
 }
+
+/**
+ * Radio groups need a name unique in the document. A fence line is not (an IR
+ * may give two blocks the same line), so names are numbered in render order;
+ * `render()` resets the count so the same document always gets the same names.
+ */
+let chartSeq = 0;
+export const resetChartIds = () => { chartSeq = 0; };
 
 /** Popover rows, in the order the menu lists them. */
 const MENU = /** @type {const} */ ([
@@ -54,10 +63,10 @@ function controlledChart(block) {
   const kind = block.kind;
   const controls = /** @type {string[]} */ (d.controls ?? []);
   const has = (c) => controls.includes(c);
-  const panels = panelsOf(d);
+  // Views are merged after normalize ran on the base, so each panel gets the same defaults again.
+  const panels = panelsOf(d).map((p) => ({ ...p, data: normalizeChart(kind, p.data) }));
   const views = d.views ?? [];
-  // Radio groups need a name unique in the document; the fence line is.
-  const id = `cx${block.line ?? 0}`;
+  const id = `cx${++chartSeq}`;
 
   const body = [];
   for (const p of panels) {

@@ -128,7 +128,8 @@ export const fixed = (dp) => (v) => {
 
 /** Resolve a `format` enum value to a formatter; anything unknown falls back to `compact`. */
 export function formatter(format) {
-  return FORMATS[format] ?? FORMATS.compact;
+  // Own presets only: a format of "__proto__" or "toString" must not resolve to a builtin.
+  return typeof format === "string" && Object.hasOwn(FORMATS, format) ? FORMATS[format] : FORMATS.compact;
 }
 
 // A small gutter on every side: end labels and dot rings sit right on the frame,
@@ -924,7 +925,8 @@ export function waterfall(rows, {
  * control can hide it: `labels` names every labelled point beside its dot
  * (a label that would collide is left to the hover text), `pareto` joins the
  * points no other point beats toward the named corner, and `quadrant` shades
- * that corner from the median of each axis.
+ * that corner from the median of each axis. Both are computed over every
+ * series, so hiding a series in a switchable legend does not move them.
  */
 export function scatter(points, {
   title = "", note = "", height = 280, xTitle = "", yTitle = "",
@@ -949,10 +951,10 @@ export function scatter(points, {
     const { top, ticks: tk } = ticks(extent(vs)[1]);
     return { ticks: tk, frac: (v) => v / top, label: f };
   };
-  /** Every plotted point, for the axes and the annotations. @type {{ x: number, y: number, label: string }[]} */
+  /** Every plotted point, for the axes and the annotations; `si` is its series. @type {{ x: number, y: number, label: string, si?: number }[]} */
   const all = [];
   if (series.length) {
-    for (const s of series) for (const p of s.points) all.push({ x: p[0], y: p[1], label: p[2] ?? "" });
+    series.forEach((s, si) => { for (const p of s.points) all.push({ x: p[0], y: p[1], label: p[2] ?? "", si }); });
   } else {
     for (const p of points) all.push({ x: p.x, y: p.y, label: p.label ?? "" });
   }
@@ -1097,7 +1099,8 @@ function pointLabels(all, xOf, yOf, g, W) {
     const c = cands.find((k) => !hit(k.b, i));
     if (!c) return;
     placed.push(c.b);
-    out += `<text x="${n(c.x)}" y="${n(c.y)}" class="tick pl k-labels" text-anchor="${c.a}">${esc(p.label)}</text>`;
+    // Tagged with its series, so hiding the series in a legend hides its labels too.
+    out += `<text x="${n(c.x)}" y="${n(c.y)}" class="tick pl k-labels"${p.si === undefined ? "" : seriesAttr(p.si)} text-anchor="${c.a}">${esc(p.label)}</text>`;
   });
   return out;
 }

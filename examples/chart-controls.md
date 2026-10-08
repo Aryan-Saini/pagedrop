@@ -219,7 +219,6 @@ Each tab is a different x metric. The settings menu flips the x axis between log
         }
       ],
       "xTitle": "Output tokens per second",
-      "xScale": "linear",
       "pareto": "top-right",
       "quadrant": "top-right"
     },
